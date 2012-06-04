@@ -1,0 +1,7 @@
+COPRO-Seq
+=========
+Scripts and other inputs needed to perform a COPRO-Seq (COmmunity PROfiling by
+Sequencing) analysis. This type of analysis is useful when one is interested in
+simultaneously measuring the proportional representation of many different
+microbes in an experimental sample. It is most appropriate when working with 
+defined consortia of known, sequenced organisms.
