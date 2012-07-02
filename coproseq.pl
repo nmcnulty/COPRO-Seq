@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 # Author: Nathan McNulty
-# Last Updated: 05/27/2010
+# Last Updated: 06/29/2012
 
 # THIS SOFTWARE IS CURRENTLY INCOMPLETE AND NOT FIT FOR DISTRIBUTION OUTSIDE OF THE LAB.
 
@@ -12,11 +12,13 @@
 #		how many reads, etc.); what should be returned from this subroutine?
 #	Work on memory leaks; Perl appears to be using far more memory than should be needed (likely some memory is not being released back to memory pool)
 
-use lib "$ENV{HOME}/coproseq";
-#use lib "$HOME/coproseq";	# Tell perl where to find barcodes.pm
-use barcodes;
 use strict;
 use warnings;
+# FindBin variable '$FindBin::Bin' stores the path to coproseq.pl
+use FindBin;
+# Provide location of barcodes.pm
+use lib "$FindBin::Bin/lib";
+use barcodes;
 use Getopt::Long;
 use Cwd;
 use IO::File;
@@ -30,6 +32,7 @@ my $prefix = (time)."-".int(rand(1000));	# Default: the prefix preceding all cre
 my $readsize = 29;							# Default: program will use the first 29bp of each Illumina read unless told to use more/less
 my $mismatches_allowed = 0;					# Default: program will not use any reads that eland requires 1 or 2 mismatches to map in creating summaries
 my $IGS_table;								
+my $single_cpu;								# Default: assume that alignment processes will be distributed across multiple CPUs in a Sun Grid Engine environment
 my $tags;									# Default: don't include a source tag in the table output files (.mappingstats, .hitratios, etc.) produced
 
 GetOptions (	'a|allfiles'		=> \$allfiles,
@@ -41,6 +44,7 @@ GetOptions (	'a|allfiles'		=> \$allfiles,
 				'n|normalization=s'	=> \$IGS_table,
 				'o|outputdir=s'		=> \$outputdir,
 				'p|prefix=s'		=> \$prefix,
+				's|single_cpu'		=> \$single_cpu,
 				't|tags'			=> \$tags
 ) or die usage();
 
@@ -48,7 +52,14 @@ if (! defined $outputdir)	{	$outputdir = $prefix;	}
 #&check_options(\$bcseqs, \$genomesdir, \$input, \$readsize, \$mismatches_allowed, \$outputdir, \$prefix);
 
 # DECLARATION OF CONSTANTS
-my $WAIT_TIME = 10;		# Units = seconds; equal to number of seconds between each attempt to check if all eland alignments are finished
+my $WAIT_TIME = 10;				# Units = seconds; equal to number of seconds between each attempt to check if all eland alignments are finished
+my $ALIGNMENT_MEMORY = '10G';	# Amount of RAM to allocate to Eland when doing alignments
+
+# Locations of needed programs/scripts
+my $parse_script_path =
+	"$FindBin::Bin/parseNM.pl";
+my $eland_executables_folder = 
+	'/srv/cgs/local/gapipeline/latest/bin/';
 
 # Generate directories that will be needed (if they haven't been created already; -d should possibly be -e below???)
 if (! -d "$outputdir")					{	mkdir "$outputdir" || die "$!\n";					}
@@ -59,182 +70,147 @@ if (! -d "$outputdir/hitratios")		{	mkdir "$outputdir\/hitratios" || die "$!\n";
 if (! -d "$outputdir/mappingstats")		{	mkdir "$outputdir\/mappingstats" || die "$!\n";		}
 if (! -d "$outputdir/NM" )				{	mkdir "$outputdir\/NM" || die "$!\n";				}
 if (! -d "$outputdir/filteredseqs")		{	mkdir "$outputdir\/filteredseqs" || die "$!\n";		}
+if (! -d "$outputdir/monitoring")		{	mkdir "$outputdir\/monitoring" || die "$!\n";		}
 if (! -d "$outputdir/filteredseqs/adapter")	{	mkdir "$outputdir\/filteredseqs/adapter" || die "$!\n";	}
 if (! -d "$outputdir/filteredseqs/mouse")	{	mkdir "$outputdir\/filteredseqs/mouse" || die "$!\n";	}
 if (! -d "$outputdir/filteredseqs/unknown")	{	mkdir "$outputdir\/filteredseqs/unknown" || die "$!\n";	}
 
-# 1) Open BC file and check for formatting, store barcodes in an array
-# 2) Open an output file stream for each barcode
-# 3) Cycle through every sequence in the SCARF file and write it to output
-# 4) Close output files
+# Open BC file, check formatting, and store file info in a hash
+my $ref_to_samples_by_bc_hash = parse_bc_file($bcseqs);
+my %samplesbybarcode = %$ref_to_samples_by_bc_hash;
+# For %samplesbybarcode, key = barcode sequence; value = sample name
+my @barcodes = keys %samplesbybarcode;
 
-# Check for barcode sequence/sample name file, store barcode sequences/sample names, get their length for hash building later
-# This should be re-written as a subroutine that is passed a reference to the barcode file and returns a hash of sample names/barcode sequences
-my %bc_abbrev = barcodes::declare_barcodes();	# Key = BC1, BC2, etc. ; value = barcode sequence
-my @barcodes;
-# Consider replacing @barcodes with a hash (and then just passing the keys of the hash when @barcodes is needed) so that I can keep
-#	track of how many times a barcode appears in a bc sample file
-my %samplesbybarcode = ();			# Key = barcode sequence, value = sample name
-# If BC file is created in Excel for Mac OS X or in a Windows text editor, lines may be separated by carriage returns (/r) which will cause problems
-&ensure_unix_compatible($bcseqs);	# Fixes carriage return compatibility problems
-open (BC_INPUT, $bcseqs) || die "There was a problem opening $bcseqs\n\n";
-foreach (<BC_INPUT>) {
-	chomp;
-	my @line = split(/\t/, $_);		# Temporarily stores barcode and sample description as elements [0] and [1], respectively
-	if (defined $bc_abbrev{$line[0]}) {		# If barcode was stored as an abbreviation...
-		push(@barcodes, $bc_abbrev{$line[0]});
-		$samplesbybarcode{$bc_abbrev{$line[0]}}="$line[1]";
-	}
-	else {									# Barcode was stored literally
-		push(@barcodes, $line[0]);
-		$samplesbybarcode{$line[0]}="$line[1]";
-	}
-	if (@line != 2) {
-		die "There appears to be a problem with the format of your barcode/sample name description file.";
+# Confirm barcodes are of consistent size and report their length
+my $bcsize = check_bc_size(\@barcodes);
+summarize_bcs(\@barcodes);
+
+# Detect sequence file format, parse sequence file, and report bc tally stats
+my $seq_file_type = detect_seq_file_type($input);
+my ($ref_to_bc_tallies_hash, $readnumber) = parse_seq_file_by_bc($seq_file_type, \@barcodes, $bcsize);
+report_bc_tallies($ref_to_bc_tallies_hash, $readnumber, \@barcodes);
+
+# Create file of alignment jobs and either submit it to Sun Grid Engine or run it locally
+my $ref_to_array_of_jobs_files = make_alignment_jobs_file(\@barcodes, $readsize, $bcsize);
+if ($single_cpu) { 
+	foreach (@$ref_to_array_of_jobs_files) {
+		system("sh $_");
 	}
 }
-close BC_INPUT;
-
-print "\nNumber of barcodes: ".(scalar @barcodes)."\n";
-my $bcsize = &check_bc_size(@barcodes);
-print "Barcode size: $bcsize\n";
-print "Barcode sequences: ";
-for (my $k=0; $k < scalar @barcodes - 1; $k++) { print "$barcodes[$k], "; }
-print $barcodes[-1];
-print "\n\nParsing sequence info by barcode...\n";
-
-my %barcodes_seen;
-my %filehandlehash;
-foreach my $a (@barcodes) {
-	my $fh = IO::File->new(">$outputdir\/bcsortedseqs\/$prefix\_$a\.fas");
-	$filehandlehash{$a} = $fh;
-	$barcodes_seen{$a} = 1;
-}
-# SCARF example: HWI-EAS158:4:1:120:636#0/1:GAAATCCGTGTGGACAGCCGTCATCTGTTCCCGTCC:aabbbaaaaaa_a^aaa
-# Note quality scores are now stored as ASCII characters which must be decoded to get numeric scores
-open (ILLUMINA_INPUT, $input) || die "\nCan't open $input\n\n";
-my %bc_tallies;	# key = barcode, value = # of occurrences
-my $readnumber=0;	# Will keep track of number of sequences in file
-while (<ILLUMINA_INPUT>) {
-	$readnumber++;
-	my @SCARFline = split(/:/, $_); # Should generate an array with 7 elements (sequence is the 6th, [5])
-	my $bc = substr($SCARFline[5], 0, $bcsize);
-	$bc_tallies{$bc}++;	# Tally a hit for each n-mer barcode seen in SCARF file (even those not expected)
-	if ($barcodes_seen{$bc}) {
-		my $fh = $filehandlehash{$bc};
-		print $fh ">$SCARFline[1]\:$SCARFline[2]\:$SCARFline[3]\:$SCARFline[4]\n".substr($SCARFline[5],$bcsize,$readsize-$bcsize)."\n";
+else { 
+	foreach (@$ref_to_array_of_jobs_files) {
+		system("qsub -P long -l h_vmem=$ALIGNMENT_MEMORY $_");
 	}
 }
-close ILLUMINA_INPUT;
-foreach(@barcodes) {
-	close($filehandlehash{$_});
-}
-
-########################################################################################################################################################
-# Report statistics for each barcode to an output file (includes barcode sequence, # occurrences, and % of all reads represented by that barcode
-open (BCSTATS, ">$outputdir\/seqcountsbybc\/$prefix"."\.countsbybc") || die "Can't open $outputdir\/seqcountsbybc\/$prefix"."\.countsbybc";
-
-# Write results (sorted by most -> least # of hits per barcode) to output file
-if($tags) {	print BCSTATS "<$prefix>\n"; }
-foreach my $key (sort{$bc_tallies{$b} <=> $bc_tallies{$a}} keys %bc_tallies) {
-	printf BCSTATS "%s\t%d\t%7.4f%%\n", $key, $bc_tallies{$key}, ($bc_tallies{$key}/$readnumber)*100;
-}
-close BCSTATS;
 
 ########################################################################################################################################################
 # PURPOSE:	Create a jobs file for each Eland submission and pass it to nq
-# NOTES:	Must use -l option for qsub for each job to ensure a 64-bit node is used (Eland is only compiled in 64-bit format on the cluster as of 3/24/09)
-#			I would have preferred to name the jobs file "$prefix_elandjobs", but in cases where $prefix begins with a number, qsub will return an error
+# NOTES:	I would have preferred to name the jobs file "$prefix_elandjobs", but in cases where $prefix begins with a number, qsub will return an error
 #			Could get around this by just using some particular letter at the beginning, like "X_$prefix_elandjobs"; this would allow me to selectively
 #				remove the appropriate elandjobs files at the end of the script without interrupting other submissions from other input files
 #			If for some reason you suspect Eland will take longer than 1 hour to run, you must add in the "-P long" option to ensure jobs are passed
 #				to the long queue
-
-# Create a jobs file of tasks for each barcode and submit them as they are created
-my $elandtype = "eland_".($readsize - $bcsize);	# Must account for removal of barcode from the reads used
-foreach (@barcodes) {
-	open (TASKSFORBC, ">$outputdir\/elandjobs\_$prefix\_$_\.job") || die "Error: Can't create $outputdir\/elandjobs\_$prefix\_$_\.job\n\n";
-	# Align to refs to create $prefix_$barcode.elandout
-	print TASKSFORBC 	"/srv/cgs/local/gapipeline/latest/bin/$elandtype $outputdir\/bcsortedseqs\/$prefix\_$_\.fas $genomesdir $outputdir\/elandresults\/$prefix\_$_\.elandout\n",
-	# Parse NM seqs from $prefix_$barcode.elandout to /NM/$prefix_$barcode_norefs.NM
-						"~/coproseq/parseNM.pl $outputdir\/elandresults\/$prefix\_$_\.elandout NM\/$prefix\_$_\_norefs.NM\n",
-	# Align $prefix_$barcode_norefs.NM to adapter genome, allowing 2 mismatches, to create $prefix_$barcode_adapter.elandout
-		# Squashed adapter genome should be distributed with scripts and stored in ~/coproseq/filteringrefs/adapter
-						"/srv/cgs/local/gapipeline/latest/bin/$elandtype NM\/$prefix\_$_\_norefs.NM ~/coproseq/filteringrefs/adapter NM\/$prefix\_$_\_adapter.elandout\n", 
-	# Parse NM seqs from $prefix_$barcode_adapter.elandout to $prefix_$barcode_noadapters.NM
-	# Parse non-NM seqs from $prefix_$barcode_adapter.elandout to filteredseqs/adapter/$prefix_$barcode_adapter.fna
-						"~/coproseq/parseNM.pl NM\/$prefix\_$_\_adapter.elandout NM\/$prefix\_$_\_noadapters.NM filteredseqs/adapter\/$prefix\_$_\_adapter.fna\n",
-	# Align $prefix_$barcode_noadapters.NM to mouse genome, allowing 2 mismatches, to create $prefix_$barcode_mouse.elandout
-		# Squashed mouse genome should be distributed with scripts and stored in ~/coproseq/filteringrefs/mouse
-						"/srv/cgs/local/gapipeline/latest/bin/$elandtype NM\/$prefix\_$_\_noadapters.NM ~/coproseq/filteringrefs/mouse NM\/$prefix\_$_\_mouse.elandout\n",
-	# Parse NM seqs from $prefix_$barcode_mouse.elandout to filteredseqs/unknown/$prefix_$barcode_unknown.fna
-	# Parse non-NM seqs from $prefix_$barcode_mouse.elandout to filteredseqs/mouse/$prefix_$barcode_mouse.fna
-						"~/coproseq/parseNM.pl NM\/$prefix\_$_\_mouse.elandout filteredseqs/unknown\/$prefix\_$_\_unknown.fna filteredseqs/mouse\/$prefix\_$_\_mouse.fna\n",
-	# Create dummy .done file to record that all tasks are completed
-						"echo COMPLETE > NM\/$prefix\_$_\.done\n";
-	close TASKSFORBC;
-	# Append new jobs here with semicolons so that multiple tasks get passed to each node but are completed as a group
-	# Create .done file when all tasks are finished; change code below to monitor for presence of all .done files instead of looking for .  files
-	system("qsub -P long -l h_vmem=20G $outputdir\/elandjobs\_$prefix\_$_\.job");
-}
-
-# MONITORING BELOW WILL ULTIMATELY HAVE TO BE CHANGED TO LOOK FOR .DONE FILES CREATED IN LINES ABOVE, RATHER THAN LOOKING FOR ELANDOUT FILE FOR REF ALIGNMENTS
-
-########################################################################################################################################################
-
-########################################################################################################################################################
-# PURPOSE:	For each barcode in @barcodes, check that an eland results file was generated and has a size of > 0
-# NOTES:	Eland creates an output file once it begins (with size 0) but writes all results at once (rather than writing them incrementally 
-#				like BLAST for several queries).  So, the size of any existing results file should be either 0 or the final size when it is checked
-#			It may take awhile for a file to be created (if the wait-time on the queue is long), but it shouldn't take too long for a file's size to become
-#				greater than 0 (because Eland usually only takes 3-5m to run); it might make sense to time-out in the latter case so that the script doesn't
-#				hang if something goes wrong with one of the jobs (in this case you could just re-submit the problematic jobs from the jobs file)
-#			Use global constant WAIT_TIME to dictate how long to wait between checking for files
-
-# Sleep for 5s after all files are created with size > 0 to be sure all are done being written to (probably not necessary, but just to be safe)
-
-# When all files return Message #3 (i.e. all Eland jobs are done), proceed with generating summaries
-
-# CONSIDER RE-WRITING FILE CHECKING SUB-ROUTINE SO THAT IT RETURNS FILE SIZE INSTEAD OF AN ERROR CODE THAT HAS TO BE DECODED
-my $starttime = scalar localtime();		# Get start time before beginning so user can monitor how long they've been waiting
-my $num_running = 0;
-my $num_finished = 0;
-my $num_notstarted = 0;
-print "\nStarted checking for alignment results to reference genomes on $starttime\n\n";		# Add in line of code to figure out how long you've been waiting
-while ($num_finished < scalar(@barcodes)) {	# While there are still Eland output files that aren't made/done yet...
-	$num_running = 0;
-	$num_finished = 0;
-	$num_notstarted = 0;
-	foreach (@barcodes) {
-		my $filestring = "$prefix"."_".$_.".elandout";
-		my $statuscode = &check_for_file("$outputdir\/elandresults\/$filestring");
-		if ($statuscode == 0) { $num_notstarted++; }
-		elsif ($statuscode == 1) { $num_running++; }
-		elsif ($statuscode == 2) { $num_finished++; }
+sub make_alignment_jobs_file {
+	my ($barcodes_array_ref, $readsize, $bcsize) = @_;
+	my $elandtype = "eland_".($readsize - $bcsize);
+	my @array_of_jobs_files;
+	foreach (@$barcodes_array_ref) {
+		my $jobs_file_path = "$outputdir\/elandjobs\_$prefix\_$_\.job";
+		push(@array_of_jobs_files, $jobs_file_path);
+		open (TASKSFORBC, ">$jobs_file_path") || die "Error: Can't create $jobs_file_path\n\n";
+		if (-s "$outputdir\/bcsortedseqs\/$prefix\_$_\.fas") {	# If sequence file is not empty (-s returns true for file sizes > 0)
+			print TASKSFORBC
+			# Align to microbial references
+				"$eland_executables_folder\/$elandtype $outputdir\/bcsortedseqs\/$prefix\_$_\.fas $genomesdir $outputdir\/elandresults\/$prefix\_$_\.elandout\n",
+			# Pass sequences that did not align to microbial references to a new file (use as input for alignment to adapters)
+				"$parse_script_path $outputdir\/elandresults\/$prefix\_$_\.elandout NM\/$prefix\_$_\_norefs.NM\n",
+			# Align remaining sequences to adapter reference, allowing 2 mismatches
+			# Squashed adapter genome should be distributed with scripts
+				"$eland_executables_folder\/$elandtype NM\/$prefix\_$_\_norefs.NM $FindBin::Bin/filteringrefs/adapter NM\/$prefix\_$_\_adapter.elandout\n", 
+			# Pass sequences that did not align to adapter reference to a new file (use as input for alignment to mouse)
+			# Also pass sequences that DID align to adapter reference to a new file
+				"$parse_script_path NM\/$prefix\_$_\_adapter.elandout NM\/$prefix\_$_\_noadapters.NM filteredseqs/adapter\/$prefix\_$_\_adapter.fna\n",
+			# Align remaining sequences to mouse reference, allowing 2 mismatches
+			# Squashed mouse genome should be distributed with scripts
+				"$eland_executables_folder\/$elandtype NM\/$prefix\_$_\_noadapters.NM $FindBin::Bin/filteringrefs/mouse NM\/$prefix\_$_\_mouse.elandout\n",
+			# Pass sequences that did not align to mouse reference to a new file (these will be the final, non-matching sequences of unknown origin)
+			# Also pass sequences that DID align to mouse reference to a new file
+				"$parse_script_path NM\/$prefix\_$_\_mouse.elandout filteredseqs/unknown\/$prefix\_$_\_unknown.fna filteredseqs/mouse\/$prefix\_$_\_mouse.fna\n",
+			# Create dummy .done file to record that all tasks are completed
+				"echo COMPLETE > NM\/$prefix\_$_\.done\n";
+		}
+		else {
+			print TASKSFORBC "echo Skipping alignments for barcode $_ because there were no sequences in your input file matching this barcode.\n";
+			# Create empty .elandout file so that progress monitoring doesn't break
+			print TASKSFORBC "touch $outputdir\/elandresults\/$prefix\_$_\.elandout\n";
+			print TASKSFORBC "echo COMPLETE > NM\/$prefix\_$_\.done\n";
+		}
+		close TASKSFORBC;
+		# Append new jobs here with semicolons so that multiple tasks get passed to each node but are completed as a group
+		# Create .done file when all tasks are finished; change code below to monitor for presence of all .done files instead of looking for .  files
 	}
-	print "Waiting to start: $num_notstarted\tRunning: $num_running\tFinished: $num_finished\n";		
-	sleep $WAIT_TIME;
+	return \@array_of_jobs_files;
 }
-print "\nEland has finished all alignments to the reference genomes specified.\n\n";
 
-# Recycle variables above
-$num_finished = 0;
-print "Checking status of no-match sequence filtering...\n";
-while ($num_finished < scalar(@barcodes)) {	# While there are still no-match records to filter against mouse/adapter genomes...
-	$num_running = 0;
-	$num_finished = 0;
-	$num_notstarted = 0;
-	foreach (@barcodes) {
-		my $filestring = "NM\/$prefix\_$_\.done";
-		my $statuscode = &check_for_file($filestring);
-		if ($statuscode == 0) { $num_notstarted++; }
-		elsif ($statuscode == 1) { $num_running++; }
-		elsif ($statuscode == 2) { $num_finished++; }
+unless ($single_cpu) {
+	# MONITORING BELOW WILL ULTIMATELY HAVE TO BE CHANGED TO LOOK FOR .DONE FILES CREATED IN LINES ABOVE, RATHER THAN LOOKING FOR ELANDOUT FILE FOR REF ALIGNMENTS
+	
+	########################################################################################################################################################
+	
+	########################################################################################################################################################
+	# PURPOSE:	For each barcode in @barcodes, check that an eland results file was generated and has a size of > 0
+	# NOTES:	Eland creates an output file once it begins (with size 0) but writes all results at once (rather than writing them incrementally 
+	#				like BLAST for several queries).  So, the size of any existing results file should be either 0 or the final size when it is checked
+	#			It may take awhile for a file to be created (if the wait-time on the queue is long), but it shouldn't take too long for a file's size to become
+	#				greater than 0 (because Eland usually only takes 3-5m to run); it might make sense to time-out in the latter case so that the script doesn't
+	#				hang if something goes wrong with one of the jobs (in this case you could just re-submit the problematic jobs from the jobs file)
+	#			Use global constant WAIT_TIME to dictate how long to wait between checking for files
+	
+	# Sleep for 5s after all files are created with size > 0 to be sure all are done being written to (probably not necessary, but just to be safe)
+	
+	# When all files return Message #3 (i.e. all Eland jobs are done), proceed with generating summaries
+	
+	# CONSIDER RE-WRITING FILE CHECKING SUB-ROUTINE SO THAT IT RETURNS FILE SIZE INSTEAD OF AN ERROR CODE THAT HAS TO BE DECODED
+	my $starttime = scalar localtime();		# Get start time before beginning so user can monitor how long they've been waiting
+	my $num_running = 0;
+	my $num_finished = 0;
+	my $num_notstarted = 0;
+	print "\nStarted checking for results of alignment to reference genomes on $starttime\n\n";		# Add in line of code to figure out how long you've been waiting
+	while ($num_finished < scalar(@barcodes)) {	# While there are still Eland output files that aren't made/done yet [for alignments to reference genomes]...
+		$num_running = 0;
+		$num_finished = 0;
+		$num_notstarted = 0;
+		foreach (@barcodes) {
+			my $filestring = "$prefix"."_".$_.".elandout";
+			my $statuscode = check_for_file("$outputdir\/elandresults\/$filestring");
+			if ($statuscode == 0) { $num_notstarted++; }
+			elsif ($statuscode == 1) { $num_running++; }
+			elsif ($statuscode == 2) { $num_finished++; }
+		}
+		print "Waiting to start: $num_notstarted\tRunning: $num_running\tFinished: $num_finished\n";		
+		sleep $WAIT_TIME;
 	}
-	print "Waiting/Running: ".($num_notstarted + $num_running)."\tFinished: $num_finished\n";		
-	sleep $WAIT_TIME;
+	print "\nEland has finished all alignments to the reference genomes specified.\n\n";
+	
+	# Recycle variables above
+	$num_finished = 0;
+	print "Checking status of no-match sequence filtering...\n";
+	while ($num_finished < scalar(@barcodes)) {	# While there are still no-match records to filter against mouse/adapter genomes...
+		$num_running = 0;
+		$num_finished = 0;
+		$num_notstarted = 0;
+		foreach (@barcodes) {
+			my $filestring = "NM\/$prefix\_$_\.done";
+			my $statuscode = check_for_file($filestring);
+			if ($statuscode == 0) { $num_notstarted++; }
+			elsif ($statuscode == 1) { $num_running++; }
+			elsif ($statuscode == 2) { $num_finished++; }
+		}
+		print "Waiting/Running: ".($num_notstarted + $num_running)."\tFinished: $num_finished\n";		
+		sleep $WAIT_TIME;
+	}
+	print "\nAll filtering of no-match sequences against adapter and mouse genomes complete.\n";
 }
-print "\nAll filtering of no-match sequences against adapter and mouse genomes complete.\n";
 
 # PARSE EACH ELAND OUTPUT INTO A SUMMARY FILE
 # Use squashed genomes directory to create summary file fields (i.e. for each Eland results file, create a list of possible results where each possible result 
@@ -270,7 +246,13 @@ foreach (@barcodes) {
 		print MAPPING_STATS "<$samplesbybarcode{$_}>\n";			# This source tag will allow summarize_tables.pl to properly label master summary columns with sample names
 	}	
 	open (ELANDRESULTS, "$outputdir\/elandresults\/$prefix"."_".$_.".elandout") || die "Can't open $prefix"."_".$_.".elandout";
-	my %hit_counts;
+
+	my %hit_counts;	# Key = genome name; Value = raw hits to genome;
+	# Initialize %hit_counts keys and set all values to zero (have to do this because some keys may never appear in Eland results file)
+	foreach (@genome_names) {
+		$hit_counts{$_} = 0;
+	}
+
 	my %uniqueness_counts = (	
 								"NM",			0,
 								"NM-adapter",	0,
@@ -294,10 +276,6 @@ foreach (@barcodes) {
 	my @wc_array3 = split(/\s/, $wc_output_unknown);
 	$uniqueness_counts{'NM-unknown'}=($wc_array3[0] / 2);
 
-	# Initialize %hit_counts keys and set all values to zero (have to do this because some keys may never appear in Eland results file)
-	foreach (@genome_names) {
-		$hit_counts{$_} = 0;
-	}
 	foreach (<ELANDRESULTS>) {
 		my @elandfields = split(/\t/, $_);				# Store each tab-delimited Eland output field
 		chomp $elandfields[2];							# In some cases, a \n will be included and mess up hash assignments later
@@ -326,30 +304,40 @@ foreach (@barcodes) {
 		$hitstotal = $hitstotal + $hit_counts{$key};
 	}
 	# Write results to output files, sorting each hash by key to ensure a consistent output structure for every file
-	if($IGS_table) {		# If an IGS table is available for going beyond raw hit calculations...
+	if($IGS_table) {		# If an IGS table is available for going beyond raw hit calculations... (will this ever not be the case?)
 		my $IGS_HoH_ref = table_file_to_HoH($IGS_table);
 		my $total_norm_hits = 0;
-		foreach my $g (sort keys %hit_counts) {		$total_norm_hits += $hit_counts{$g} / $$IGS_HoH_ref{$readsize-$bcsize}{$g};	}
-		foreach my $genomekey (sort keys %hit_counts) { 
-			my $norm_hits;
-			$norm_hits = $hit_counts{$genomekey} / $$IGS_HoH_ref{$readsize-$bcsize}{$genomekey};
-			# In cases where there are very few or no reads that map uniquely to any of the references, the line below will throw a division by zero error,
-			#	so a check to make sure $total_norm_hits is not still 0 at this point is required
-			if ($total_norm_hits > 0) {
-				printf SPECIES_HITS_STATS "%s\t%d\t%.1f\t%.8f\n", $genomekey, $hit_counts{$genomekey}, $norm_hits, $norm_hits / $total_norm_hits;
+		foreach my $g (sort keys %hit_counts) {
+			$total_norm_hits += $hit_counts{$g} / $$IGS_HoH_ref{$readsize-$bcsize}{$g};
+		}
+		if ($total_norm_hits > 0) {
+			foreach my $genomekey (sort keys %hit_counts) { 
+				my $norm_hits;
+				$norm_hits = $hit_counts{$genomekey} / $$IGS_HoH_ref{$readsize-$bcsize}{$genomekey};
+				# In cases where there are very few or no reads that map uniquely to any of the references, the line below will throw a division by zero error,
+				#	so a check to make sure $total_norm_hits is not still 0 at this point is required
+				if ($total_norm_hits > 0) {
+					printf SPECIES_HITS_STATS "%s\t%d\t%.1f\t%.8f\n", $genomekey, $hit_counts{$genomekey}, $norm_hits, $norm_hits / $total_norm_hits;
+				}
 			}
-			else {
-				print "Warning: There are zero results in the alignment output for barcode $q that meet your mapping criteria.  This sample generated no informative data.\n";
-				printf SPECIES_HITS_STATS "%s\t%d\t%.1f\t%s\n", $genomekey, $hit_counts{$genomekey}, $norm_hits, "Div by 0";
+		}
+		else {
+			foreach my $genomekey (sort keys %hit_counts) {
+					printf SPECIES_HITS_STATS "%s\t%d\t0\t0\n", $genomekey, $hit_counts{$genomekey};		
+					#printf SPECIES_HITS_STATS "%s\t%d\t%.1f\t%s\n", $genomekey, $hit_counts{$genomekey}, $norm_hits, "Div by 0";
 			}
+			print "\nWarning: There are zero results in the alignment output for barcode $q that meet your mapping criteria.  This sample generated no informative data.\n";
 		}
 	}
 	else {
-		foreach my $genomekey (sort keys %hit_counts) { printf SPECIES_HITS_STATS "%s\t%d\n", $genomekey, $hit_counts{$genomekey}; }
+		foreach my $genomekey (sort keys %hit_counts) { 
+			printf SPECIES_HITS_STATS "%s\t%d\n", $genomekey, $hit_counts{$genomekey};
+		}
 	}
 	close SPECIES_HITS_STATS;
 
 	my $matchcodestotal = 0;
+	# Which codes does the following line exclude?  How is this diff. from the commented loop that follows?
 	$matchcodestotal = $uniqueness_counts{NM}+$uniqueness_counts{QC}+$uniqueness_counts{R0}+$uniqueness_counts{R1}+$uniqueness_counts{R2}+$uniqueness_counts{RM}+$uniqueness_counts{U0}+$uniqueness_counts{U1}+$uniqueness_counts{U2};
 # 	foreach my $key (keys %uniqueness_counts) {
 # 		$matchcodestotal = $matchcodestotal + $uniqueness_counts{$key};
@@ -378,13 +366,16 @@ sub check_for_file {
 }
 
 sub check_bc_size {
-	my @barcodes = shift @_;
+	my $bc_array_ref = shift;
+	my @bcs = @{$bc_array_ref};
 	my $bcsize;
-	foreach (@barcodes) {
+	foreach (@bcs) {
 		if (!defined $bcsize) {
-			$bcsize = length $_;		# Start with first BC sequence
+			# Start with first BC sequence
+			$bcsize = length $_;
 		}	
-		else {					# Check to make sure none of the sequence lengths are different from the first
+		else {
+			# Check to make sure none of the sequence lengths are different from the first
 			if ($bcsize != length $_) {
 				die "Your barcode sequences do not appear to be a consistent length.\n\n";
 			}
@@ -393,18 +384,30 @@ sub check_bc_size {
 	return $bcsize;
 }
 
-sub ensure_unix_compatible {
-	my $fileName = shift @_;
-	my $file_contents = "";
-	open (INPUT, $fileName) || die "Can't open $fileName for input.\n";
-	while (<INPUT>) {
-		$file_contents .= $_;
-	}
+# Input: file path
+# Output: Returns 1 (OK) if no instances of the carriage return character are found (the presence of these characters would imply a file is using either PC or Mac-formatted end-of-line characters (\r\n, \r, respectively)
+sub check_file_for_unix_friendliness {
+	my $file_path = shift;
+	my $original_terminator = $/;
+	my $file_info;
+	undef $/;
+	open(INPUT, $file_path)
+		or die "Can't open file for Unix-friendly check at $file_path!\n";
+	$file_info = <INPUT>;
 	close INPUT;
-	$file_contents =~ tr/\r/\n/;
-	open (OUTPUT, ">$fileName") || die "Can't open $fileName for output.\n";
-	print OUTPUT $file_contents;
-	close OUTPUT;
+	if ($file_info =~ /\r/) {
+		if ($file_info =~ /\r\n/) {
+			die "Your file, $file_path, appears to be utilizing PC-formatted end-of-line characters.  Please reformat this file to use Unix end-of-line characters.\n";
+		}
+		elsif ($file_info =~ /\r/) {
+			die "Your file, $file_path, appears to be utilizing Mac-formatted end-of-line characters.  Please reformat this file to use Unix end-of-line characters.\n";
+		}
+		else {
+			die "Your file, $file_path, appears to be utilizing unrecognized end-of-line characters.  Please reformat this file to use Unix end-of-line characters.\n";
+		}
+	}
+	$/ = $original_terminator;
+	return 1;
 }
 
 sub usage {
@@ -439,6 +442,183 @@ sub table_file_to_HoH {
 	}
 	close INPUT;
 	return \%HoH;
+}
+
+# Open barcode sequence/sample name file and return a hash describing its
+# contents (key = barcode sequence, value = sample name)
+sub parse_bc_file {
+	my $bc_file_path = shift;
+	my %bc_abbrev = barcodes::declare_barcodes();
+	my %bc_occurrence;
+	my %samples_by_bc;	# Key = barcode sequence, value = sample name
+
+	# Confirm all EOL characters in .bc file are OK for Unix
+	check_file_for_unix_friendliness($bc_file_path);
+
+	open(BC_INPUT, $bc_file_path);
+	foreach(<BC_INPUT>) {
+		chomp;
+		my @line = split(/\t/, $_);
+		# If barcode is specified in .bc file as an abbreviation (e.g., BC1)
+		if (defined	$bc_abbrev{$line[0]}) {
+			$bc_occurrence{$bc_abbrev{$line[0]}}++;
+			$samples_by_bc{$bc_abbrev{$line[0]}} = $line[1];
+		}
+		else {
+			$bc_occurrence{$line[0]}++;
+			$samples_by_bc{$line[0]} = $line[1];
+		}
+		if (@line != 2) {
+			die "\nThe following line in file '$bc_file_path' has the wrong".
+			" number of columns (i.e., ".scalar(@line).", rather than 2):\n\n".
+			$_."\n\nNote that non-obvious characters such as tabs and ".
+			"whitespace may be the problem if extra columns are not evident".
+			"\n\n";
+		}
+	}
+	close BC_INPUT;
+	return \%samples_by_bc;
+}
+
+sub summarize_bcs {
+	my $bc_array_ref = shift;
+	print "\nNumber of barcodes: ".scalar(@$bc_array_ref)."\n";
+	print "Barcode size: ".check_bc_size($bc_array_ref)."\n";
+	print "Barcode sequences: ";
+	for (my $k = 0; $k < (scalar(@$bc_array_ref) - 1); $k++) {
+		print "$$bc_array_ref[$k], ";
+	}
+	print $barcodes[-1];
+}
+
+# Input: path to a file/symbolic link of sequences in either SCARF or FASTQ format (only two formats supported right now)
+# Output: a string describing the file format detected (i.e., 'SCARF', 'FASTQ', or 'unknown')
+# Detection is based on the first 4 lines of the sequence file
+sub detect_seq_file_type {
+	my $seq_file_path = shift;
+	my $file_type;
+	my $first_four_lines;
+	open(INPUT, $seq_file_path) || die "Error: Can't open sequence input file $seq_file_path!\n\n";
+	for (my $k = 0; $k < 4; $k++) {
+		my $line = <INPUT>;
+		$first_four_lines .= $line;
+	}
+	close INPUT;
+	if ($first_four_lines =~ /@.+\n\w+\n\+\n.+\n/) {
+		$file_type = 'FASTQ';
+	}
+	elsif ($first_four_lines =~ /(.+\:.+\:.+\:.+\:.+\:.+\:.+\n){4}/) {
+		$file_type = 'SCARF';
+	}
+	else {
+		$file_type = 'unknown';
+	}
+	return $file_type;
+}
+
+sub parse_seq_file_by_bc {
+	my ($seq_file_type, $ref_to_bc_array, $bcsize) = @_;
+	unless (($seq_file_type eq 'FASTQ') || ($seq_file_type eq 'SCARF')) {
+		die "Error: Your sequence file appears to be in a format that is ".
+			"neither FASTQ nor SCARF.  These are the only two sequence file ".
+			"formats currently supported by the COPRO-Seq workflow.\n\n";
+	}
+
+	print "\n\nParsing sequence file $input (type: ".$seq_file_type.") and ".
+		"trimming sequence info by barcode...\n";
+	my %barcodes_seen;
+	my %filehandlehash;
+	foreach my $a (@$ref_to_bc_array) {
+		my $fh = IO::File->new(">$outputdir\/bcsortedseqs\/$prefix\_$a\.fas");
+		$filehandlehash{$a} = $fh;
+		$barcodes_seen{$a} = 1;
+	}
+	# SCARF example: HWI-EAS158:4:1:120:636#0/1:GAAATCCGTGTGGACAGCCGTCATCTGTTCCCGTCC:aabbbaaaaaa_a^aaa
+	# Note quality scores are now stored as ASCII characters which must be decoded to get numeric scores
+	open (SEQ_INPUT, $input) || die "\nCan't open $input\n\n";
+	my %bc_tallies;	# key = barcode, value = # of occurrences
+	my $readnumber=0;	# Will keep track of number of sequences in file
+	if ($seq_file_type eq 'SCARF') {
+		while (<SEQ_INPUT>) {
+			# If not a blank line
+			if (/.+/) {
+				$readnumber++;
+				my @SCARFline = split(/:/, $_); # Should generate an array with 7 elements (sequence is the 6th, [5])
+				my $bc = substr($SCARFline[5], 0, $bcsize);
+				$bc_tallies{$bc}++;	# Tally a hit for each n-mer barcode seen in SCARF file (even those not expected)
+				if ($barcodes_seen{$bc}) {
+					my $fh = $filehandlehash{$bc};
+					print $fh ">$SCARFline[1]\:$SCARFline[2]\:$SCARFline[3]\:$SCARFline[4]\n".substr($SCARFline[5],$bcsize,$readsize-$bcsize)."\n";
+				}
+			}
+			# (Else: line is an empty line and should be ignored)
+		}
+	}
+	elsif ($seq_file_type eq 'FASTQ') {
+		# Parse lines in groups of 4
+		my $line_count = 0;
+		my $latest_entry;
+		while (<SEQ_INPUT>) {
+			# If not a blank line
+			if (/.+/) {
+				$line_count++;
+				$latest_entry .= $_;
+				# If we've just grabbed the last/4th line of a set...
+				if ($line_count % 4 == 0) {
+					$readnumber++;
+					my @FASTQentry = split(/\n/, $latest_entry);
+					my $header = $FASTQentry[0];
+					$header =~ s/^@//;
+					# Convert whitespace to underscores (whitespace can wreak
+					# havoc on the ability of other programs, e.g. Eland, to 
+					# parse FASTA files correctly)
+					$header =~ s/\s/_/;
+					my $bc = substr($FASTQentry[1], 0, $bcsize);
+					$bc_tallies{$bc}++;
+					if ($barcodes_seen{$bc}) {
+						my $fh = $filehandlehash{$bc};
+						print $fh ">$header\n".substr($FASTQentry[1],$bcsize,$readsize-$bcsize)."\n";	
+					}
+					$latest_entry = "";
+				}
+			}		
+		}
+		# LAST ENTRY RECORDED?
+	}
+	close SEQ_INPUT;
+	foreach(@barcodes) {
+		close($filehandlehash{$_});
+	}
+	print "\nTotal number of reads sorted: $readnumber\n\n";
+	return (\%bc_tallies, $readnumber);
+}
+
+sub report_bc_tallies {
+	my ($ref_to_tallies_hash, $readnumber, $ref_to_bc_array) = @_;
+	# Make a barcodes lookup hash
+	my %bc_lookup_hash;
+	foreach(@$ref_to_bc_array) {
+		$bc_lookup_hash{$_} = 1;
+	}
+	my %bc_tallies = %{$ref_to_tallies_hash};	 # Dereference
+	
+	# Report statistics for each barcode-specific set of sequences to an output file (include barcode sequence, # occurrences, and % of all reads represented by that barcode)
+	open (BCSTATS, ">$outputdir\/seqcountsbybc\/$prefix"."\.countsbybc") || die "Can't open $outputdir\/seqcountsbybc\/$prefix"."\.countsbybc";
+
+	# Write results (sorted by most -> least # of hits per barcode) to output file
+	if($tags) {	print BCSTATS "<$prefix>\n"; }
+	foreach my $key (sort{$bc_tallies{$b} <=> $bc_tallies{$a}} keys %bc_tallies) {
+		# If current barcode is one of the expected barcodes, print an asterisk in the fourth column to make spotting the expected barcodes easier in the results
+		if (defined $bc_lookup_hash{$key}) {
+			# Syntax on this printf statement should be double-checked
+			printf BCSTATS "%s\t%d\t%7.4f%%%s\n", $key, $bc_tallies{$key}, ($bc_tallies{$key}/$readnumber)*100, " *";
+		}
+		# If not an expected barcode, just print its sequence, # of times it appeared, and its percentage of total reads
+		else {
+			printf BCSTATS "%s\t%d\t%7.4f%%\n", $key, $bc_tallies{$key}, ($bc_tallies{$key}/$readnumber)*100;
+		}
+	}
+	close BCSTATS;
 }
 
 #	&check_options(\$bcseqs, \$genomesdir, \$input, \$readsize, \$mismatches_allowed, \$outputdir, \$prefix);
