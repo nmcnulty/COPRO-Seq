@@ -1,28 +1,40 @@
 #!/usr/bin/perl
 # Author: Nathan McNulty
-# Last updated: August, 2011
-# Acknowledgements: J. Faith, for the re-use of some of his RNA-seq pipeline code and for his 
-#	clever utilization of Google spreadsheets as a front-end for the workflow
+# Last updated: June 2012
+# Acknowledgements: J. Faith, for the re-use of some of his RNA-Seq pipeline
+#  code and for his clever use of Google spreadsheets as a front-end for the
+#  workflow
 
 use strict;
 use warnings;
 use Getopt::Long qw(:config no_ignore_case);
 use DBI;
 use Bio::DB::GenBank;
-use lib '/home/comp/jglab/nmcnulty/coproseq';	# Tell perl where to find barcodes.pm and genomecodes.pm
+# FindBin variable '$FindBin::Bin' stores the path to batch_coproseq.pl
+use FindBin;	
+# Provide location of barcodes.pm and genomecodes.pm
+use lib "$FindBin::Bin/lib";
 use barcodes;
 use genomecodes;
 use Cwd;
 
-# Variables for interacting with the microbialomics server (if -ncbi option is not specified)
+# Variables for interacting with the microbialomics server (-ncbi not invoked)
 my $db_name = "microbialomics_npm_mw";
 my $host = "hamlet";
 my $pass = "reader";
 my $user = "reader";
-my $dbh = DBI->connect("DBI:mysql:$db_name:$host",$user,$pass) or die "can't open database: $DBI::errstr\n";
+my $dbh = DBI->connect("DBI:mysql:$db_name:$host",$user,$pass)
+	or die "can't open database: $DBI::errstr\n";
 
-# Locations of needed programs
-my $squashexecpath = "/srv/cgs/local/gapipeline/GAPipeline-1.5.0/bin/squashGenome";
+# Locations of needed programs/scripts
+my $squash_exec_path =
+	"/srv/cgs/local/gapipeline/GAPipeline-1.5.0/bin/squashGenome";
+my $summarize_tables_script_path =
+	"$FindBin::Bin/summarize_tables.pl";
+my $IGS_calc_script_path =
+	"$FindBin::Bin/IGScalc.pl";
+my $coproseq_script_path =
+	"$FindBin::Bin/coproseq.pl";
 
 # Declarations for folder/file names where info will be stored
 my $basedir = cwd;
@@ -32,17 +44,16 @@ my $GEOdir = "GEO";
 my $squashedgenomesdir = "genomes/squashed";
 my $project_data_path = "project.info";
 my $getdata_file_path = "getdata.sh";
-my $align_file_path = "align.jobs";
+my $align_file_path = "align.sh";
 my $cleanup_file_path = "cleanup.sh";
-my $IGS_file_path = "calcIGS.sh";
+my $IGS_calc_file_path = "calcIGS.sh";
 my $summarize_file_path = "summarize.sh";
 
 # Options declarations
-my $google_key = "0AhsSO_Vep9tqdDlzVXlJSWRPUVgxNWxkVVFJOE4tQ0E"; # Default COPRO-Seq spreadsheet (Nate)
-my ($allfiles, $GEO, $group, $ncbi, $mapping_file_path, $IGS_table_file);
+my $google_key = "0AhsSO_Vep9tqdFJFTjh1S0UyZFRmeFBHamdKU3I5RHc";
+my ($allfiles, $GEO, $group, $ncbi, $mapping_file_path, $IGS_table_file, $single_cpu);
 my $mismatches_allowed = 0;
-my $gid = 0;
-my $readsize = 25;	# Value is AFTER trimming barcode (different from past workflow versions)
+my $readsize = 25;	# Length AFTER trimming off barcode
 
 GetOptions(
 	"a|allfiles"				=> \$allfiles,
@@ -53,98 +64,130 @@ GetOptions(
 	"k|key=s"					=> \$google_key,
 	'l|length=i'				=> \$readsize,
 	"m|mapping=s"				=> \$mapping_file_path,
-	"n|ncbi"					=> \$ncbi,					# Not currently working for draft genomes!!!
+	# ncbi option below is NOT working for draft genomes
+	"n|ncbi"					=> \$ncbi,
 	"o|output=s"				=> \$basedir,
-	"p|page_from_google=i"		=> \$gid
+	"s|single_cpu"				=> \$single_cpu
 ) or die usage();
 
+# Confirm all necessary options were specified correctly
 check_options();
 
-my %groups;
-my @keeps = split /,/, $group;
-for my $k (@keeps) { $groups{$k} = 1; }
+# Confirm that mapping file is formatted with the correct EOL characters
+check_file_for_unix_friendliness($mapping_file_path);
 
-check_file_for_unix_friendliness($mapping_file_path);	# Confirm that mapping file is formatted with the correct EOL characters
+# Process value passed to group (-g) option
+my $groups_hash_ref = parse_groups($group);
 
-# Google Spreadsheet Processing
-# ==================================================================================================
-# Capture information from Google spreadsheet and store in "project.info"
-my $project_url = "http://spreadsheets.google.com/pub?key=$google_key&single=true&gid=$gid&output=txt";
-download_table($project_url, $project_data_path);
-# Load contents of "project.info" into appropriate variables and filter on group code(s) specified at startup (using -g)
+#===============================================================================
+# Google spreadsheet processing
+#===============================================================================
+
+# Copy Google spreadsheet to local text file
+#download_table("https://docs.google.com/spreadsheet/ccc?key=$google_key&output=txt&gid=0", $project_data_path);
+download_table("https://docs.google.com/spreadsheet/ccc?key=$google_key&output=txt", $project_data_path);
+#print "Downloaded spreadsheet from location:\nhttps://docs.google.com/spreadsheet/ccc?key=$google_key&output=txt&gid=0\n";
+
+# Load contents of 'project.info' into hierarchy of variables
 my $project_data_hash = table_to_hash($project_data_path);
-# $project_data_hash above is a ref to an @ of refs to %'s containing sample info (key: column header, value: spreadsheet value)
-my $filtered_data_hash = filter_by_group($project_data_hash, \%groups);
+# Filter on group(s) specified at startup using the -g option
+my $filtered_data_hash = filter_by_group($project_data_hash, $groups_hash_ref);
+# See 'Appendix A' below for overview of $filtered_data_hash organization
+check_for_absent_groups($filtered_data_hash, $groups_hash_ref);
 
-# Genome download and squashing (reference database creation for Eland)
-# Note: if there are any genomes you want to include in your analysis that are not available on 
-#	microbialomics/ncbi, they can still be included if they are added to the genomes directory and 
-#	squashed before align.sh is run
-# ==================================================================================================
+#===============================================================================
+# Genome download and squashing (reference database creation for aligner)
+#===============================================================================
 my $species_list_ref = get_species_list($filtered_data_hash);
 my @species_names = prepare_references($species_list_ref);
 squash_genomes($squashedgenomesdir);
+print "\n";
 
-# Prepare "getdata.sh"
+# Prepare 'getdata.sh'
 make_get_data_file($filtered_data_hash, $getdata_file_path);
 
-# Load up mapping hash with contents of mapping file; $mapping_hash = ref to HoH{pool}{sample}=barcode
+# Load up mapping hash with contents of mapping file
+# $mapping_hash = reference to HoH{pool}{sample}=barcode
 my $mapping_hash = load_mapping_file($mapping_file_path);
 
-# Prepare ".bc" files
-my %bclength_by_pool;	# Keep track of barcode length in each pool
-for my $p (@$filtered_data_hash) {			# For each lane that's part of the analysis group	
+# Prepare '.bc' files
+my %bclength_by_pool;	# Use to keep track of barcode length in each pool
+# For each lane that's part of the analysis group...
+for my $p (@$filtered_data_hash) {
 	my $filteredsamples = get_filtered_sample_list($p, $mapping_hash);
-	$bclength_by_pool{$p->{pool}} = make_bc_file($mapping_hash, $p->{pool}, $filteredsamples, $p->{run}."_".$p->{lane}."\.bc");
+	$bclength_by_pool{$p->{pool}} = make_bc_file($mapping_hash, $p->{pool}, 
+		$filteredsamples, $p->{machine}.'_'.$p->{run}.'_'.$p->{lane}."\.bc");
 }
 
-# Prepare ".bc_mod" files and "split_scarfs.sh" if -G switch turned on at startup to make 
-#	preparation of barcode-split SCARF files easier for the user (invokation of split_scarfs.sh must
-#	wait until after user has run getdata.sh as part of pipeline)
+# Prepare '.bc_mod' files and 'split_scarfs.sh' if -G switch was turned on
+# Makes preparation of barcode-split SCARF files easier for the user
+# Note: split_scarfs.sh must be run AFTER getdata.sh
 if ($GEO) {	
-	my ($split_sh_commands, $move_sh_commands, $make_table_sh_commands);	 # Will store running tally of commands that will be contents of GEO-related .sh files
+	# Declare variables for storing running tally of commands that will be
+	# the contents of GEO-related .sh files
+	my ($split_sh_commands, $move_sh_commands, $make_table_sh_commands);
 	my $a;
 	for my $p (@$filtered_data_hash) {
 		my $filteredsamples = get_filtered_sample_list($p, $mapping_hash);
 		my $new_bc_file = $p->{run}."_".$p->{lane}."\.bc_mod";
 		my $scarf_to_split = "../".$p->{run}."_".$p->{lane}.".scarf";
-		make_modified_bc_file($p->{run}, $p->{lane}, \%{$$mapping_hash{$p->{pool}}}, $filteredsamples, "GEO\/$new_bc_file");
-		$split_sh_commands .= "perl ../../split_barcodes.pl $new_bc_file $scarf_to_split\n";
+		make_modified_bc_file($p->{run}, $p->{lane}, 			
+			\%{$$mapping_hash{$p->{pool}}}, $filteredsamples,
+			"GEO\/$new_bc_file");
+		$split_sh_commands .= 
+			"perl ../../split_barcodes.pl $new_bc_file $scarf_to_split\n";
 		foreach(@$filteredsamples) {
-			$move_sh_commands .= "cp ../hitratios/".$p->{run}."_".$p->{lane}."_".$_."_specieshits_*bp_*MM.hitratios run".$p->{run}."_lane".$p->{lane}."_".$$mapping_hash{$p->{pool}}{$_}."_".$_.".hitratios\n";
+			$move_sh_commands .= 
+				"cp ../hitratios/".$p->{machine}.'_'.$p->{run}.'_'.$p->{lane}.'_'.$_.'_' .
+				"specieshits_*bp_*MM.hitratios run".$p->{run} .
+				'_lane'.$p->{lane}."_".$$mapping_hash{$p->{pool}}{$_} .
+				'_'.$_.".hitratios\n";
 		}
 	}
 	write_GEO_sh(">./GEO/split_scarfs.sh", $split_sh_commands);
 	write_GEO_sh(">./GEO/move_hits.sh", $move_sh_commands);
-	$make_table_sh_commands = "perl ../../prepare_geo_table.pl -g $group -m ../$mapping_file_path -s ../$project_data_path -o GEO_table.txt\n";
+	$make_table_sh_commands = "perl ../../prepare_geo_table.pl -g $group " .
+		"-m ../$mapping_file_path -s ../$project_data_path -o GEO_table.txt\n";
 	write_GEO_sh(">./GEO/prepare_GEO_table.sh", $make_table_sh_commands);
 	write_GEO_readme(">./GEO/README.txt");
 }
 
-# Prepare "align.sh"
+# Prepare 'align.sh'
 make_align_file($filtered_data_hash, \%bclength_by_pool, $align_file_path);
 
-# Prepare "IGS.table" if none is provided or IGS table file provided (using -i at startup) fails to validate
-if ($IGS_table_file) {									# If user specified a pre-made IGS table
-	if (! validate_IGS_table($IGS_table_file, $readsize, \@species_names)) {		# If it fails to validate...
-		make_IGS_file($IGS_file_path);					# Calculate a new IGS table
-		$IGS_table_file = "genomes/IGS/IGS.table";		# Set location of IGS table to path of newly created file
-	}
-}
-else {
-	make_IGS_file($IGS_file_path);
-	$IGS_table_file = "genomes/IGS/IGS.table";
-}
+# Prepare/validate 'IGS.table'
+$IGS_table_file = make_igs_table_file(\@species_names);
 
-# Prepare "summarize.sh"
+# Prepare 'summarize.sh'
 make_summarize_file($filtered_data_hash, $summarize_file_path);
 
-# Prepare "cleanup.sh"
+# Prepare 'cleanup.sh'
 make_cleanup_file($filtered_data_hash, $cleanup_file_path);
 
 exit;
 
 
+
+sub make_igs_table_file {
+	my $names_ref = shift;
+	my $IGS_table_path;
+	# If user specified a pre-made IGS table...
+	if ($IGS_table_file) {
+		# If it fails to validate...
+		if (! validate_IGS_table($IGS_table_file, $readsize, $names_ref)) {
+			# Calculate a new IGS table
+			make_IGS_calc_file($IGS_calc_file_path);
+			# Set location of IGS table to path of newly created file
+			$IGS_table_path = "$FindBin::Bin/genomes/IGS/IGS.table";
+		}
+	}
+	# If no IGS table was specified...
+	else {
+		make_IGS_calc_file($IGS_calc_file_path);
+		$IGS_table_path = "$FindBin::Bin/genomes/IGS/IGS.table";
+	}
+	return $IGS_table_path;
+}
 
 # Inputs: file path for IGS table, list of species that should be present, k-mer size that should be present
 sub validate_IGS_table {
@@ -185,7 +228,7 @@ sub validate_IGS_table {
 sub table_file_to_HoH {
 	my $table_file_path = shift;
 	my %HoH;
-	open (INPUT, $table_file_path) || die "Error Can't open table file $table_file_path.\n";
+	open (INPUT, $table_file_path) || die "ERROR: Can't open table file $table_file_path.\n";
 	my $firstline = <INPUT>;		# First line should be tab-separated headers with empty first cell
 	chomp $firstline;
 	my @headers = split (/\t/, $firstline);
@@ -224,57 +267,52 @@ sub print_HoH_from_table_file {
 
 sub make_summarize_file {
 	my ($spreadsheet_hash, $filepath) = @_;
-	open (SUMMARIZE, ">$filepath") || die "Error: Can't open $filepath!\n";	
+	open (SUMMARIZE, ">$filepath") || die "ERROR: Can't open $filepath!\n";
 	print SUMMARIZE "mkdir $summariesdir\n";
 	
 	# Summarize all .countsbybc files; use spreadsheet hash to make list of all .countsbybc files
-	print SUMMARIZE "perl ~/coproseq/summarize_tables.pl -r 1 -v 2 -i seqcountsbybc > $summariesdir/counts.bcdist\n";
-	print SUMMARIZE "perl ~/coproseq/summarize_tables.pl -r 1 -v 3 -i seqcountsbybc > $summariesdir/percent.bcdist\n";
+	print SUMMARIZE "perl $summarize_tables_script_path -r 1 -v 2 -i seqcountsbybc > $summariesdir/counts.bcdist\n";
+	print SUMMARIZE "perl $summarize_tables_script_path -r 1 -v 3 -i seqcountsbybc > $summariesdir/percent.bcdist\n";
 
 	# Summarize all .mappingstats files
-	print SUMMARIZE "perl ~/coproseq/summarize_tables.pl -r 1 -v 2 -i mappingstats > $summariesdir/counts.mappingstats\n";
-	print SUMMARIZE "perl ~/coproseq/summarize_tables.pl -r 1 -v 3 -i mappingstats > $summariesdir/percent.mappingstats\n";
+	print SUMMARIZE "perl $summarize_tables_script_path -r 1 -v 2 -i mappingstats > $summariesdir/counts.mappingstats\n";
+	print SUMMARIZE "perl $summarize_tables_script_path -r 1 -v 3 -i mappingstats > $summariesdir/percent.mappingstats\n";
 
 	# Summarize all .hitratios files
-	print SUMMARIZE "perl ~/coproseq/summarize_tables.pl -r 1 -v 2 -i hitratios > $summariesdir/raw_counts.profile\n";
+	print SUMMARIZE "perl $summarize_tables_script_path -r 1 -v 2 -i hitratios > $summariesdir/raw_counts.profile\n";
 	if($IGS_table_file) {
-		print SUMMARIZE "perl ~/coproseq/summarize_tables.pl -r 1 -v 3 -i hitratios > $summariesdir/norm_counts.profile\n";
-		print SUMMARIZE "perl ~/coproseq/summarize_tables.pl -r 1 -v 4 -i hitratios > $summariesdir/norm_percent.profile\n";
+		print SUMMARIZE "perl $summarize_tables_script_path -r 1 -v 3 -i hitratios > $summariesdir/norm_counts.profile\n";
+		print SUMMARIZE "perl $summarize_tables_script_path -r 1 -v 4 -i hitratios > $summariesdir/norm_percent.profile\n";
 	}
 	close SUMMARIZE;
 }
 
-sub make_IGS_file {
+sub make_IGS_calc_file {
 	my $filepath = shift;
-	open (IGS, ">$filepath") || die "Error: Can't open $filepath!\n";
+	open (IGS, ">$filepath") || die "ERROR: Can't open $filepath!\n";
 	print IGS "mkdir genomes/IGS\n";
-	print IGS "perl ~/coproseq/IGScalc.pl -f genomes -s genomes/squashed -o genomes/IGS -k $readsize -c\n";
+	print IGS "perl $IGS_calc_script_path -f genomes -s genomes/squashed -o genomes/IGS -k $readsize -c\n";
 	close IGS;
 }
 
 sub make_cleanup_file {
 	my ($spreadsheet_hash, $filepath) = @_;
-	open (CLEANUP, ">$filepath") || die "Error: Can't open $filepath!\n";
+	open (CLEANUP, ">$filepath") || die "ERROR: Can't open $filepath!\n";
 	print CLEANUP "rm $project_data_path\n";
 	print CLEANUP "rm $getdata_file_path\n";
 	print CLEANUP "rm $align_file_path\n";
-	if ($IGS_file_path eq "genomes/IGS/IGS.table") { # i.e. if IGS.table has to be made with calcIGS.sh 
-		print CLEANUP "rm $IGS_file_path\n"; 
-	}
-	if (!$IGS_table_file) {
-		print CLEANUP "rm $IGS_file_path\n";
-	}
-	print CLEANUP "rm $summarize_file_path\n";
 	print CLEANUP "rm $cleanup_file_path\n";
-	print CLEANUP "rm $align_file_path" . "*" . "\n";
-	print CLEANUP "rm -rf genomes\n";
+	print CLEANUP "if [ -f $align_file_path\* ];\nthen\nrm $align_file_path*\nfi\n";
+	print CLEANUP "if [ -f $IGS_calc_file_path ];\nthen\nrm $IGS_calc_file_path\nfi\n";
+ 	print CLEANUP "rm $summarize_file_path\n";
+#	print CLEANUP "rm -rf genomes\n";			# Main this folder in case user has manually included some of their own genomes
 	for my $p (@$spreadsheet_hash) {
-		my $prefix = $p->{run} . "_" . $p->{lane};
+		my $prefix = $p->{machine}.'_'.$p->{run}.'_'.$p->{lane};
 		print CLEANUP "rm $prefix.bc\n";
-		print CLEANUP "rm $prefix.scarf\n";
+		print CLEANUP "rm $prefix.seq\n";
 		print CLEANUP "rm -rf $prefix\n";
 	}
-	print CLEANUP "rm elandjobs*\n";
+#	print CLEANUP "if [ -f elandjobs* ];\nthen\nrm elandjobs*\nfi\n";	# Doesn't work because -f returns multiple filenames...need to rework with ls
 	print CLEANUP "rm -rf bcsortedseqs\n";
 	print CLEANUP "rm -rf elandresults\n";
 #	print CLEANUP "rm -rf hitratios\n";			# Maintain this folder so that processed data files inside can be deposited with GEO if necessary
@@ -288,17 +326,25 @@ sub make_cleanup_file {
 sub make_align_file {
 # perl ~/scripts/coproseq/coproseq.pl -i 207_5_SCARF -b 207_5_bcs -g ~/SquashedGenomes/NM601 -p 207_5 -m 0 -l 29
 	my ($spreadsheet_hash, $bclengths_hash_ref, $filepath) = @_;
-	open (ALIGNFILE, ">$filepath") || die "Error: Can't open $filepath!\n";
+	my $cpu;
+	# Set default name/location for IGS table file if it has not been specified
+	# (IGS.table will always have same name/location when calcIGS.sh is run)
+	unless (defined $IGS_table_file) {
+		$IGS_table_file = "$basedir/genomes/IGS/IGS.table";
+	}
+	if ($single_cpu) {
+		$cpu = ' -s';
+	}
+	else {
+		# Leave no flag when building alignment job task
+		$cpu = '';
+	}
+	open (ALIGNFILE, ">$filepath") || die "ERROR: Can't open $filepath!\n";
 	for my $p (@$spreadsheet_hash) {
-		my $prefix = $p->{run} . "_" . $p->{lane};
-		if($IGS_table_file) {
-			print ALIGNFILE "perl ~/coproseq/coproseq.pl -i $prefix.scarf -b $prefix.bc -g $basedir/genomes/squashed",
-							" -p $prefix -m $mismatches_allowed -o $basedir -n $IGS_table_file -t -l " . ($readsize+$$bclengths_hash_ref{$p->{pool}}) . "\n";
-		}
-		else {
-			print ALIGNFILE "perl ~/coproseq/coproseq.pl -i $prefix.scarf -b $prefix.bc -g $basedir/genomes/squashed",
-							" -p $prefix -m $mismatches_allowed -o $basedir -n $basedir/genomes/IGS/IGS.table -t -l " . ($readsize+$$bclengths_hash_ref{$p->{pool}}) . "\n";
-		}
+		my $prefix = $p->{machine}.'_'.$p->{run}.'_'.$p->{lane};
+		print ALIGNFILE "perl $coproseq_script_path -i $prefix.seq -b $prefix.bc -g $basedir/genomes/squashed" .
+						" -p $prefix -m $mismatches_allowed -o $basedir -n $IGS_table_file -t -l " . ($readsize+$$bclengths_hash_ref{$p->{pool}}) . 
+						$cpu."\n";
 	}
 	close ALIGNFILE;
 	return 1;
@@ -324,11 +370,13 @@ sub get_bc_length {
 # Output: Returns 1 (OK) if no instances of the carriage return character are found (the presence of these characters would imply a file is using either PC or Mac-formatted end-of-line characters (\r\n, \r, respectively)
 sub check_file_for_unix_friendliness {
 	my $file_path = shift;
-	my $store_terminator = $/;
+	my $original_terminator = $/;
 	my $file_info;
 	undef $/;
-	open(INPUT, $file_path) || die "Can't open file for Unix-friendly check at $file_path!\n";
+	open(INPUT, $file_path)
+		or die "Can't open file for Unix-friendly check at $file_path!\n";
 	$file_info = <INPUT>;
+	close INPUT;
 	if ($file_info =~ /\r/) {
 		if ($file_info =~ /\r\n/) {
 			die "Your file, $file_path, appears to be utilizing PC-formatted end-of-line characters.  Please reformat this file to use Unix end-of-line characters.\n";
@@ -340,8 +388,7 @@ sub check_file_for_unix_friendliness {
 			die "Your file, $file_path, appears to be utilizing unrecognized end-of-line characters.  Please reformat this file to use Unix end-of-line characters.\n";
 		}
 	}
-	$/ = $store_terminator;
-	close INPUT;
+	$/ = $original_terminator;
 	return 1;
 }
 
@@ -367,7 +414,7 @@ sub load_mapping_file {
  			$sample_names_seen{$line[1]} = 1;
  		}
  		else {
- 			die "Error: There is more than one instance of sample name $line[1] in your mapping file. ",
+ 			die "ERROR: There is more than one instance of sample name $line[1] in your mapping file. ",
  				"All sample names within your mapping file must be unique to avoid problems in downstream data summarization.\n";
  		}
  	}
@@ -385,7 +432,7 @@ sub make_bc_file {
 	}
 	test_bc_list_compatibility(\@barcodes);
 	$bclength = get_bc_length(@barcodes);
-	open(BCFILE, ">$bc_file_path") || die "Error: Can't open .bc file $bc_file_path!\n";
+	open(BCFILE, ">$bc_file_path") || die "ERROR: Can't open .bc file $bc_file_path!\n";
 	foreach(@$sample_list) {
 		print BCFILE "$$mapping_hash{$pool}{$_}\t$_\n";
 	}
@@ -403,18 +450,18 @@ sub test_bc_list_compatibility {
 	foreach(@barcodes) {
 		# Check if this looks like an appropriate barcode (i.e. is only A,C,T,G)
 		if (/[^ATCGN]/) {
-			die "\nError: One of your barcodes ($_) has invalid characters.\n";
+			die "\nERROR: One of your barcodes ($_) has invalid characters.\n";
 		}
 		# Make sure this barcode is the same length as previous barcodes
 		if (!$bclength) {
 			$bclength = length($_); 
 		}
 		elsif ($bclength != length($_)) {
-			die "Error: Your barcodes are not of uniform length.  The CoPro-seq workflow does not",
+			die "ERROR: Your barcodes are not of uniform length.  The COPRO-Seq workflow does not",
 				" currently support analysis of pool subsets containing barcodes of mixed length.\n";
 		}
 		if ($barcodes_seen{$_}) {
-			die "Error: One of your pools has more than one sample with the same barcode designation.\n";
+			die "ERROR: One of your pools has more than one sample with the same barcode designation.\n";
 		}
 		$barcodes_seen{$_} = 1;
 	}
@@ -423,31 +470,40 @@ sub test_bc_list_compatibility {
 
 sub make_get_data_file {
 	my ($spreadsheet_hash, $filepath) = @_;
-	open (GETDATA, ">$filepath") || die "Error: Can't open $filepath!\n";
-	my %files_seen;
+	open (GETDATA, ">$filepath") || die "ERROR: Can't open $filepath!\n";
+	my %paths_created;
+	# For each row in the filtered spreadsheet hash...
 	for my $p (@$spreadsheet_hash) {
-		if ($p->{run} && $p->{lane}) {		# If both run and lane are defined
-			my $dir = run_to_directory($p->{run});	# Could try if (run_to_directory($p->{run}) != 0) { then work with $_...
-			if ($dir ne "0") {	# i.e. There was no error converting run # into a directory name
-				my $seq_file = $dir . 's_' . $p->{lane} . '_sequence.txt';
-				my $scarf_file = $p->{run} . '_' . $p->{lane} . '.scarf';
-				# Don't want to grab the same file 2x
-				if (!$files_seen{$scarf_file}) {	# If we haven't seen this file before...
-# Eventually incorporate this conditional into the .sh file instead so that the shell script checks if this
-# file already exists
-					unless (-e $scarf_file) {
-#						print GETDATA "echo Transferring $seq_file...\n";
-						print GETDATA "echo Creating symbolic link to $seq_file...\n";
-#						print GETDATA "cp $seq_file $scarf_file\n";
-						print GETDATA "ln -s $seq_file $scarf_file\n";
+		# If a machine, run and lane are defined...
+		if ($p->{machine} && $p->{run} && $p->{lane}) {
+			if ($p->{path}) {
+				my $source_path = $p->{path};
+				my $link_path = $p->{machine}.'_'.$p->{run}.'_'.$p->{lane}.'.seq';
+				# If we haven't seen this file before (don't want to create the
+				#	same link over and over)...
+				if (!$paths_created{$link_path}) {
+					if (-e $link_path) {
+						print GETDATA "echo 'Skipping creation of symbolic ",
+							"link to $source_path (a link to this file ",
+							"already exists)...'\n";
+					}
+					else {
+						print GETDATA "echo Creating symbolic link to ",
+							"$source_path...\n";
+						print GETDATA "ln -s $source_path $link_path\n";
 						print GETDATA "echo Done.\n";
 					}
-					$files_seen{$scarf_file}=1;
+					$paths_created{$link_path}=1;
 				}
 			}
-			else { print "Warning: the run # for pool $p->{pool} could not be converted properly.  Check your spreadsheet!\n"; }
+			else {
+				die "\nERROR: You have not specified a full file path for pool $p->{pool}!\n\n";
+			}
 		}
-		else { print "Warning: the run and/or lane # for pool $p->{pool} are not specified.  Check your spreadsheet!\n"; }
+		else {
+			die "\nERROR: the machine and/or run and/or lane # for pool $p->{pool} are not ",
+			"specified. Check your spreadsheet!\n\n";
+		}
 	}
 	close GETDATA;
 	return 1;
@@ -455,23 +511,23 @@ sub make_get_data_file {
 
 sub squash_genomes {
 	my $dir = shift;
-	print "Starting genome squashing...\n";
+	print "Starting genome squashing...\n\n";
 	if (! -d $dir)	{	`mkdir $dir`;	}
 	else {	print "Note: Directory '$dir' already exists.\n";	}
-	`find ./$genomesdir -maxdepth 1 -type f -print | xargs $squashexecpath $squashedgenomesdir`;
+	`find ./$genomesdir -maxdepth 1 -type f -print | xargs $squash_exec_path $squashedgenomesdir`;
 }
 
 sub download_genomes {
 	my ($species_list_ref, $source) = @_;
 	if (! -d $genomesdir)	{	`mkdir $genomesdir`;	}
-	else {	print "Note: Directory 'genomes' already exists.\n";	}
+	else {	print "Warning: Directory 'genomes' already exists.\n";	}
 
 	if ($source eq 'ncbi') {
-		print "Starting genome downloads from NCBI...\n";
+		print "\nStarting genome downloads from NCBI...\n\n";
 		download_files_from_genbank($species_list_ref, $genomesdir);
 	}
 	elsif ($source eq 'microbialomics') {
-		print "Starting genome downloads from microbialomics...\n";
+		print "\nStarting genome downloads from microbialomics...\n\n";
 		download_files_from_microbialomics($species_list_ref, $genomesdir);
 	}
 }
@@ -498,7 +554,7 @@ sub download_files_from_genbank {
 
 sub get_species_list {
 	my $spreadsheet_info_ref = shift;
-	my %species_from_hash;				# Hash's keys will maintain a non-redundant list of species found in the Google spreadsheet
+	my %species_from_hash;	# Used to maintain a non-redundant list of species
 	my %genomecodes;
 	if ($ncbi) {
 		%genomecodes = genomecodes::declare_genbankacc_for_genomeabbrev(); 
@@ -507,17 +563,18 @@ sub get_species_list {
 		%genomecodes = genomecodes::declare_inhouseacc_for_genomeabbrev();
 		# Key = abbreviation (e.g. BACCAC), value = in-house accession #
 	}
-	foreach my $p (@$spreadsheet_info_ref) {	# $p is a ref to a hash (one ref per spreadsheet row)
+	foreach my $p (@$spreadsheet_info_ref) {
 		if ($p->{genomes}) {
 			my $allspecies = $p->{genomes};
 			my @splitspecies = split(/,/,$allspecies);
 			foreach (@splitspecies) {
-				s/^\s+//;	# Eliminate any leading whitespace(s) (e.g., in a comma-separated list)
-				s/\s+$//;	# Eliminate any trailing whitespace(s)
+				s/^\s+//;	# Eliminate any leading whitespace
+				s/\s+$//;	# Eliminate any trailing whitespace
 				if ($genomecodes{$_}) {	# If a species abbreviation is defined
 					$species_from_hash{$genomecodes{$_}} = 1;
 				}
-				else {					# If a species abbreviation is not defined
+				# Use accession # as key if no species name is defined
+				else {
 					$species_from_hash{$_} = 1;
 				}
 			}
@@ -535,6 +592,7 @@ sub download_files_from_microbialomics {
 	#	the accession # instead (I don't think this should cause any problems)
 	# Ultimately I need an efficient way of building a genomecodes.pm file from J's database so that it doesn't need to be
 	#	manually updated as changes are made and new strains/species are introduced
+	print "Will use database $db_name\.\.\.\n\n";
 	for my $s (@$species) {
 		my $filefriendlyname;
 		if (defined $species_for_acc{$s}) {
@@ -577,8 +635,9 @@ sub get_genome_data {
 	my $sth = $dbh->prepare($query);
 	$sth->execute($constant_id);
 	if ($sth->rows == 0) {
-		die "Error: There is no genome with genome_constant_id (NCBI accession) $constant_id in $db_name.",
-			"Check your accession # or genome abbreviation to be sure it is correct.\n";
+		die "\nERROR: There is no genome with genome_constant_id $constant_id",
+			" in $db_name. Check your accession # or genome abbreviation to be",
+			" sure it is correct.\n\n";
 	}
 	while (my @res = $sth->fetchrow_array()) {
 		return @res;
@@ -594,7 +653,7 @@ sub table_to_hash {
 	chomp $line;
 	my @headers = split /\t/, $line;
 	for (@headers) {	
-		$_ = lc($_);
+		$_ = lc($_);	# Convert all headers to lowercase
 		$_ =~ s/\s/_/g;	# Convert any whitespace in headers to underscores (allows spreadsheet to be a little prettier)
 	}
 	# Headers will be "group", "pool", "run", "lane", etc.
@@ -630,7 +689,7 @@ sub filter_by_group {
 
 sub download_table {
 	my ($url, $outfile) = @_;
-	print STDERR "\n\n" . fancy_title("Downloading contents of $url to $outfile");
+	print STDERR "\n" . fancy_title("Downloading contents of $url to $outfile");
 	sleep(1 + 2*rand());	# Don't piss off google (ensures if you are batch-processing multiple 
 							# different analyses you don't tick off Google's servers for
 							# making a lot of requests for info in a short time (which would look like a DoS attack)
@@ -648,7 +707,7 @@ sub fancy_title {
 
 sub usage {
 	my $error = shift;
-	print "$error\n\n" if $error;
+	print "$error\n" if $error;
 	print 	"Usage: perl batch_coproseq.pl -g <analysis group(s)> -m <mapping file>\n",
 			"\t-e Number of errors/mismatches to allow in alignment (0-2)\n",
 			"\t-g Code(s) specifying the analysis groups (defined in Google Spreadsheet) you want to include in this analysis\n",
@@ -663,43 +722,43 @@ sub usage {
 }
 
 
-# Takes any run number from the Google spreadsheet of 4 digits or less, excluding any decimals
-#	specifying run version numbers, and converts it to the format used in the sequencing results 
-#	file system (e.g. if run is 55.1, converts it to 0055.1)
+# Takes any run number from the Google spreadsheet of 4 digits or less, 
+# excluding any decimals specifying run version numbers, and converts it to the
+# format used in the sequencing results file system (e.g. if run value is 55.1, 
+# this number is converted to 0055.1)
 sub run_to_directory {
 	my $text=shift;
-	my $dir_name_len = 4;						# May change in the future...
+	my $dir_name_len = 4;	# Update if # of runs ever exceeds 9999
 	my $dir_base = "/srv/seq/solexa/results/";
 	my @pieces = split '\.', $text;				# Separate run # from run version # (e.g. 55 from .1)
 	my $dir = shift @pieces;
 	if (length($dir) <= 4) {
+		# Append leading zeros until run # is 4 digits
 		while (length($dir) < $dir_name_len) {
-			$dir = "0" . $dir;						# Append leading zeros until run # is 4 digits
+			$dir = "0" . $dir;
 		}
 		unshift @pieces, $dir;
 		my $final_dir = join ".", @pieces;
 		return $dir_base . $final_dir . "/";
 	}
 	else {
-		return "0";	# Denotes there was an error (e.g. run # was too big)
+		# Denotes there was an error
+		return "0";
 	}
 }
 
 sub check_options {
 	if (!$mapping_file_path) { 
-		usage("Error: You must pass the required parameter -m\n"); 
+		usage("\nERROR: You must pass the required parameter -m\n"); 
 	}
 	if (($mismatches_allowed < 0) || ($mismatches_allowed > 2)) {
-		usage("Error: The number of mismatches allowed is restricted to values from 0-2\n");
+		usage("\nERROR: The number of mismatches allowed is restricted to values from 0-2\n");
 	}
 	if (!$group) {
-		usage("Error: You must pass the required parameter -g\n");
+		usage("\nERROR: You must pass the required parameter -g\n");
 	}
 	if ($readsize > 32) {
-		usage("Error: The CoPro-seq workflow cannot currently align sequences greater than 32bp.  Please specify another read length.\n");
-	}
-	if ($gid < 0) {
-		usage("Error: Google spreadsheet page number must be a positive number.\n");
+		usage("\nERROR: The CoPro-seq workflow cannot currently align sequences greater than 32bp.  Please specify another read length.\n");
 	}
 	if ($GEO) {
 		if (! -d $GEOdir)	{	`mkdir $GEOdir`;	}
@@ -811,3 +870,61 @@ sub write_GEO_readme {
 					"\tof all normalized counts attributable to all reference genomes in the .hitratios file\n";
 	close README;
 }
+
+# Input: comma-delimited string specifying analysis groups (e.g., 'A,B')
+# Return: reference to a group lookup hash (key = group, value = 1)
+sub parse_groups {
+	my $group_string = shift;
+	my %groups;
+	my @elements = split(/,/, $group_string);
+	foreach (@elements) {
+		# Eliminate leading and trailing whitespace that might be present
+		# Otherwise, specifying -g 'A, B' would result in groups "A" and " B"
+		s/^\s+//;
+		s/\s+$//;
+		$groups{$_} = 1;
+	}
+	return \%groups;
+}
+
+sub check_for_absent_groups {
+	my ($spreadsheet_hash_ref, $groups_hash_ref) = @_;
+	my (%groups_in_spreadsheet, %groups_missing_in_spreadsheet);
+	# Create lookup hash of all groups found in analysis spreadsheet
+	for my $p (@$project_data_hash) { 
+		if (defined $p->{group}) {
+			$groups_in_spreadsheet{$p->{group}} = 1;
+		}
+	}
+	# Check to see if any of the groups specified by the user are not
+	# found in the spreadsheet (i.e., are not present in the lookup hash)
+	foreach (keys %$groups_hash_ref) {
+		if (! defined $groups_in_spreadsheet{$_}) {
+			$groups_missing_in_spreadsheet{$_} = 1;
+		}
+	}
+	if (keys %groups_missing_in_spreadsheet > 0) {
+		my $missing;
+		foreach (keys %groups_missing_in_spreadsheet) {
+			$missing .= $_."\n";
+		}
+		die	"ERROR: ".scalar(keys %groups_missing_in_spreadsheet)." group ",
+			"names passed with '-g' could not be found in your analysis ",
+			"spreadsheet:\n\n$missing\n";
+	}
+}
+
+# APPENDIX A
+#===============================================================================
+# $filtered_data_hash is a reference to an array:
+#	\@array;
+# This referenced array contains references to hashes (one hash per sample)
+#	@array = (\%sample_1, \%sample_2, \%sample_3, ..)
+# Each hash contains info for one sample (key = column name; value = value)
+# 	$hash{run} = 100
+# 	$hash{lane} = 1
+#	$hash{genomes} = "BACCAC,BACOVA,BACTHE"
+
+# To cycle through this final data structure, use a loop:
+#	for my $p (@$project_data_hash) { $p->{run} }
+# Example above would access all values for the "run" column
