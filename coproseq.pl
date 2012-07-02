@@ -308,7 +308,17 @@ foreach (@barcodes) {
 		my $IGS_HoH_ref = table_file_to_HoH($IGS_table);
 		my $total_norm_hits = 0;
 		foreach my $g (sort keys %hit_counts) {
-			$total_norm_hits += $hit_counts{$g} / $$IGS_HoH_ref{$readsize-$bcsize}{$g};
+			if (defined $$IGS_HoH_ref{$readsize-$bcsize}{$g}) {
+				if ($$IGS_HoH_ref{$readsize-$bcsize}{$g} > 0) {
+					$total_norm_hits += $hit_counts{$g} / $$IGS_HoH_ref{$readsize-$bcsize}{$g};
+				}
+				else {
+					die "\nThe informative genome size (IGS) for genome $g is not a positive number.  Please check your IGS table.\n";
+				}
+			}
+			else {
+				die "\nYour IGS table does not include any informative genome size for genome $g.  Please calculate a new IGS table that includes this genome and re-run your analysis.\n";
+			}
 		}
 		if ($total_norm_hits > 0) {
 			foreach my $genomekey (sort keys %hit_counts) { 
