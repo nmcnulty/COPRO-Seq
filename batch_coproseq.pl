@@ -280,7 +280,7 @@ sub make_summarize_file {
 
 	# Summarize all .hitratios files
 	print SUMMARIZE "perl $summarize_tables_script_path -r 1 -v 2 -i hitratios > $summariesdir/raw_counts.profile\n";
-	if($IGS_table_file) {
+	if(defined $IGS_table_file) {
 		print SUMMARIZE "perl $summarize_tables_script_path -r 1 -v 3 -i hitratios > $summariesdir/norm_counts.profile\n";
 		print SUMMARIZE "perl $summarize_tables_script_path -r 1 -v 4 -i hitratios > $summariesdir/norm_percent.profile\n";
 	}
