@@ -501,7 +501,7 @@ sub make_get_data_file {
 							print GETDATA "echo Done.\n";
 						}
 						else {
-							die "Cannot create symbolic link to input sequence file $source_path because this file does not appear to exist.  Please confirm that you've specified the correct path to your sequencing results in your project spreadsheet.\n";
+							die "Cannot locate input sequence file $source_path.  Please confirm that you've specified the correct path to your sequencing results in your project spreadsheet.\n";
 						}
 					}
 					$paths_created{$link_path}=1;
