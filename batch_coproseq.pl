@@ -172,7 +172,7 @@ sub make_igs_table_file {
 	my $names_ref = shift;
 	my $IGS_table_path;
 	# If user specified a pre-made IGS table...
-	if ($IGS_table_file) {
+	if (defined $IGS_table_file) {
 		# If it fails to validate...
 		if (! validate_IGS_table($IGS_table_file, $readsize, $names_ref)) {
 			# Calculate a new IGS table
@@ -180,10 +180,16 @@ sub make_igs_table_file {
 			# Set location of IGS table to path of newly created file
 			$IGS_table_path = "$FindBin::Bin/genomes/IGS/IGS.table";
 		}
+		# Otherwise, use as-is...
+		else {
+			$IGS_table_path = $IGS_table_file;
+		}
 	}
 	# If no IGS table was specified...
 	else {
+		# Calculate a new IGS table
 		make_IGS_calc_file($IGS_calc_file_path);
+		# Set location of IGS table to path of newly created file
 		$IGS_table_path = "$FindBin::Bin/genomes/IGS/IGS.table";
 	}
 	return $IGS_table_path;
@@ -488,10 +494,15 @@ sub make_get_data_file {
 							"already exists)...'\n";
 					}
 					else {
-						print GETDATA "echo Creating symbolic link to ",
-							"$source_path...\n";
-						print GETDATA "ln -s $source_path $link_path\n";
-						print GETDATA "echo Done.\n";
+						if (-e $source_path) {
+							print GETDATA "echo Creating symbolic link to ",
+								"$source_path...\n";
+							print GETDATA "ln -s $source_path $link_path\n";
+							print GETDATA "echo Done.\n";
+						}
+						else {
+							die "Cannot create symbolic link to input sequence file $source_path because this file does not appear to exist.  Please confirm that you've specified the correct path to your sequencing results in your project spreadsheet.\n";
+						}
 					}
 					$paths_created{$link_path}=1;
 				}
