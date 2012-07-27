@@ -1,3 +1,5 @@
+#!/usr/bin/perl
+
 # Last Modified 04/28/2010
 # Author: Nate McNulty
 # Purpose: To calculate, given two or more genomes and one or more k-mer length(s), the informative genome size (IGS) of each
