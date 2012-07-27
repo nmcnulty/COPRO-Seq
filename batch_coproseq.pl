@@ -50,7 +50,7 @@ my $IGS_calc_file_path = "calcIGS.sh";
 my $summarize_file_path = "summarize.sh";
 
 # Options declarations
-my $google_key = "0AhsSO_Vep9tqdFJFTjh1S0UyZFRmeFBHamdKU3I5RHc";
+my $google_key = "0Aila9fAqH3ihdDRzSV9helRNM21RZGFkYV9QOC1oSHc";
 my ($allfiles, $GEO, $group, $ncbi, $mapping_file_path, $IGS_table_file, $single_cpu);
 my $mismatches_allowed = 0;
 my $readsize = 25;	# Length AFTER trimming off barcode
@@ -69,6 +69,12 @@ GetOptions(
 	"o|output=s"				=> \$basedir,
 	"s|single_cpu"				=> \$single_cpu
 ) or die usage();
+
+# Use of global variable below fixes problem with poor variable usage until I can make a cleaner fix
+my $IGS_PATH;
+if (defined $IGS_table_file) {
+	$IGS_PATH = $IGS_table_file;
+}
 
 # Confirm all necessary options were specified correctly
 check_options();
@@ -156,7 +162,7 @@ if ($GEO) {
 make_align_file($filtered_data_hash, \%bclength_by_pool, $align_file_path);
 
 # Prepare/validate 'IGS.table'
-$IGS_table_file = make_igs_table_file(\@species_names);
+$IGS_PATH = make_igs_table_file(\@species_names);
 
 # Prepare 'summarize.sh'
 make_summarize_file($filtered_data_hash, $summarize_file_path);
@@ -286,10 +292,8 @@ sub make_summarize_file {
 
 	# Summarize all .hitratios files
 	print SUMMARIZE "perl $summarize_tables_script_path -r 1 -v 2 -i hitratios > $summariesdir/raw_counts.profile\n";
-	if(defined $IGS_table_file) {
-		print SUMMARIZE "perl $summarize_tables_script_path -r 1 -v 3 -i hitratios > $summariesdir/norm_counts.profile\n";
-		print SUMMARIZE "perl $summarize_tables_script_path -r 1 -v 4 -i hitratios > $summariesdir/norm_percent.profile\n";
-	}
+	print SUMMARIZE "perl $summarize_tables_script_path -r 1 -v 3 -i hitratios > $summariesdir/norm_counts.profile\n";
+	print SUMMARIZE "perl $summarize_tables_script_path -r 1 -v 4 -i hitratios > $summariesdir/norm_percent.profile\n";
 	close SUMMARIZE;
 }
 
@@ -336,7 +340,7 @@ sub make_align_file {
 	# Set default name/location for IGS table file if it has not been specified
 	# (IGS.table will always have same name/location when calcIGS.sh is run)
 	unless (defined $IGS_table_file) {
-		$IGS_table_file = "$basedir/genomes/IGS/IGS.table";
+		$IGS_PATH = "$basedir/genomes/IGS/IGS.table";
 	}
 	if ($single_cpu) {
 		$cpu = ' -s';
@@ -349,7 +353,7 @@ sub make_align_file {
 	for my $p (@$spreadsheet_hash) {
 		my $prefix = $p->{machine}.'_'.$p->{run}.'_'.$p->{lane};
 		print ALIGNFILE "perl $coproseq_script_path -i $prefix.seq -b $prefix.bc -g $basedir/genomes/squashed" .
-						" -p $prefix -m $mismatches_allowed -o $basedir -n $IGS_table_file -t -l " . ($readsize+$$bclengths_hash_ref{$p->{pool}}) . 
+						" -p $prefix -m $mismatches_allowed -o $basedir -n $IGS_PATH -t -l " . ($readsize+$$bclengths_hash_ref{$p->{pool}}) . 
 						$cpu."\n";
 	}
 	close ALIGNFILE;
