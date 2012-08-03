@@ -14,6 +14,7 @@ use Bio::DB::GenBank;
 use FindBin;	
 # Provide location of barcodes.pm and genomecodes.pm
 use lib "$FindBin::Bin/lib";
+use File::Basename;
 use barcodes;
 use genomecodes;
 use Cwd;
@@ -50,7 +51,7 @@ my $IGS_calc_file_path = "calcIGS.sh";
 my $summarize_file_path = "summarize.sh";
 
 # Options declarations
-my $google_key = "0Aila9fAqH3ihdDRzSV9helRNM21RZGFkYV9QOC1oSHc";
+my $google_key = "0AhsSO_Vep9tqdFJFTjh1S0UyZFRmeFBHamdKU3I5RHc";
 my ($allfiles, $GEO, $group, $ncbi, $mapping_file_path, $IGS_table_file, $single_cpu);
 my $mismatches_allowed = 0;
 my $readsize = 25;	# Length AFTER trimming off barcode
@@ -104,8 +105,18 @@ check_for_absent_groups($filtered_data_hash, $groups_hash_ref);
 #===============================================================================
 # Genome download and squashing (reference database creation for aligner)
 #===============================================================================
-my $species_list_ref = get_species_list($filtered_data_hash);
-my @species_names = prepare_references($species_list_ref);
+
+# NEED TO ADD CODE HERE THAT ALSO GRABS INFORMATION IN GOOGLE DOC FOR
+#	AN 'OTHER_GENOMES' COLUMN WHERE USERS CAN DEFINE THE LOCATION OF 
+#	NON-MICROBIALOMICS GENOMES THAT THEY MIGHT WANT TO ALIGN TO
+# ALSO NEED TO ALLOW FOR AN EMPTY 'MICROBIALOMICS_GENOMES' COLUMN IF
+#	'OTHER_GENOMES' CONTAINS AT LEAST ONE LEGITIMATE GENOME PATH
+
+my $internal_genome_acc_list = get_internal_genome_acc($filtered_data_hash);
+
+my $external_genome_paths_list = get_external_genome_paths($filtered_data_hash);
+
+my @species_names = prepare_references($internal_genome_acc_list, $external_genome_paths_list);
 squash_genomes($squashedgenomesdir);
 print "\n";
 
@@ -170,9 +181,27 @@ make_summarize_file($filtered_data_hash, $summarize_file_path);
 # Prepare 'cleanup.sh'
 make_cleanup_file($filtered_data_hash, $cleanup_file_path);
 
+print 	"Your COPRO-Seq project has been set up successfully. Good luck with your analysis!\n\n";
+
 exit;
 
-
+sub get_external_genome_paths {
+	my %external_genome_paths;
+	my $spreadsheet_info_ref = shift;
+	foreach my $p (@$spreadsheet_info_ref) {
+		if ($p->{external_genome_paths}) {
+			my $allpaths = $p->{external_genome_paths};
+			my @splitpaths = split(/,/,$allpaths);
+			foreach (@splitpaths) {
+				s/^\s+//;	# Eliminate any leading whitespace
+				s/\s+$//;	# Eliminate any trailing whitespace
+				$external_genome_paths{$_} = 1;
+			}
+		}
+	}
+	my @external_genome_paths_list = keys %external_genome_paths;
+	return \@external_genome_paths_list;
+}
 
 sub make_igs_table_file {
 	my $names_ref = shift;
@@ -524,6 +553,9 @@ sub make_get_data_file {
 	return 1;
 }
 
+# Squash all of the FASTA-formatted genome files found in the genomes directory
+# (by the time this subroutine is called, this folder should include all genome
+# FASTA files that are to be included in the subsequent alignments)
 sub squash_genomes {
 	my $dir = shift;
 	print "Starting genome squashing...\n\n";
@@ -567,7 +599,8 @@ sub download_files_from_genbank {
 	}
 }
 
-sub get_species_list {
+# Returns an array of accession numbers for all (internal) genomes specified in Google doc
+sub get_internal_genome_acc {
 	my $spreadsheet_info_ref = shift;
 	my %species_from_hash;	# Used to maintain a non-redundant list of species
 	my %genomecodes;
@@ -579,8 +612,8 @@ sub get_species_list {
 		# Key = abbreviation (e.g. BACCAC), value = in-house accession #
 	}
 	foreach my $p (@$spreadsheet_info_ref) {
-		if ($p->{genomes}) {
-			my $allspecies = $p->{genomes};
+		if ($p->{internal_genome_accessions}) {
+			my $allspecies = $p->{internal_genome_accessions};
 			my @splitspecies = split(/,/,$allspecies);
 			foreach (@splitspecies) {
 				s/^\s+//;	# Eliminate any leading whitespace
@@ -588,15 +621,15 @@ sub get_species_list {
 				if ($genomecodes{$_}) {	# If a species abbreviation is defined
 					$species_from_hash{$genomecodes{$_}} = 1;
 				}
-				# Use accession # as key if no species name is defined
+				# Use accession # as key if no species name is defined (must be a microbialomics accession #)
 				else {
 					$species_from_hash{$_} = 1;
 				}
 			}
 		}
 	}
-	my @species_list = keys %species_from_hash;
-	return \@species_list;
+	my @acc_list = keys %species_from_hash;
+	return \@acc_list;
 }
 
 sub download_files_from_microbialomics {
@@ -642,6 +675,7 @@ sub download_files_from_microbialomics {
 			}
 		}
 	}
+	print "\n";
 }
 
 sub get_genome_data {
@@ -837,32 +871,103 @@ sub get_filtered_sample_list {
 	return \@filteredsamples;
 }
 
+# Input: reference to array of microbialomics accession #'s
+# Returns: array of human-readable species names (and also accession #'s
+#	in cases where no human-readable name is defined in genomecodes.pm
 sub prepare_references {
-	my $species_list_ref = shift;
+	my ($internal_genome_accs, $external_genome_paths) = @_;
 	my @species_names;
+	
+	# 1) Handle microbialomics (internal) genomes...
+
 	if ($ncbi) {
-		download_genomes($species_list_ref, 'ncbi');
+		download_genomes($internal_genome_accs, 'ncbi');
 		my %species_for_acc = genomecodes::declare_speciesname_for_genbankacc();
-		foreach(@$species_list_ref) {
+		foreach(@$internal_genome_accs) {
 			push(@species_names, $species_for_acc{$_});
 		}
 	}
 	else { 
-		download_genomes($species_list_ref, 'microbialomics');
-		my %species_for_acc = genomecodes::declare_speciesname_for_inhouseacc();
-		# Key = accession #, value = species name
-		foreach(@$species_list_ref) {	# $species_list_ref points to array of accession #'s, 
-										# some of which may not be defined in species_for_acc
-			if (defined $species_for_acc{$_}) {
-				push(@species_names, $species_for_acc{$_});
-			}
-			else {
-				push(@species_names, $_);	# Use accession # as species name if species name not defined in genomecodes.pm
+		if ((scalar @$internal_genome_accs) > 0) {
+			download_genomes($internal_genome_accs, 'microbialomics');
+			my %species_for_acc = genomecodes::declare_speciesname_for_inhouseacc();
+			# Key = accession #, value = species name
+			foreach(@$internal_genome_accs) {	# $species_list_ref points to array of accession #'s, 
+											# some of which may not be defined in species_for_acc
+				if (defined $species_for_acc{$_}) {
+					push(@species_names, $species_for_acc{$_});
+				}
+				else {
+					push(@species_names, $_);	# Use accession # as species name if species name not defined in genomecodes.pm
+				}
 			}
 		}
+		else {
+			print "The user has requested no microbialomics genome files.\n\n";
+		}
 	}
-	print "\n";
+	
+	# 2) Handle external (user-supplied FASTA) genomes...
+
+	if ((scalar @$external_genome_paths) > 0) {
+		# First, check that all user-supplied files look OK
+		foreach my $a (@$external_genome_paths) {
+			validate_user_supplied_genome($a);
+			push(@species_names, basename($a));
+		}
+		# Then, report which files will be included
+		print	"The following non-microbialomics genomes will be included ",
+				"in your analysis:\n";
+		foreach(@$external_genome_paths) {
+			print "$_\n";
+		}
+		print "\n";
+		# Finally, copy the genomes from the user-specified location to the 'genomes' directory
+		foreach my $b (@$external_genome_paths) {
+			print "Copying genome file ".basename($b)."...\n";
+			`cp $b $genomesdir`;
+			print "Done.\n";
+		}
+		print "\n";
+	}
+	else {
+		print "The user has supplied no external genome files.\n\n";
+	}
+	
+	if ((scalar @$internal_genome_accs == 0) && (scalar @$external_genome_paths == 0)) {
+		die "ERROR: You must include at least one genome in your COPRO-Seq analysis request.  Please check columns 'Internal genome accessions' and 'External genome paths' in your Google spreadsheet, and re-run your analysis.\n\n";
+	}
+	
 	return @species_names;
+}
+
+# Check to confirm that a user-supplied file is a single-entry FASTA and contains only standard bases
+sub validate_user_supplied_genome {
+	my $file = shift;
+	my $header;
+	my $seq;
+	if (-e $file) {
+		open(INPUT, $file) || die "ERROR: Can't open user-supplied genome file $file!\n\n";
+		$header = <INPUT>;
+		if ($header =~ /^>.+/) {
+			while (<INPUT>) {
+				if (/^>/) {
+					die "ERROR: Your genome file $file appears to contain multiple entries. This software only supports single-entry FASTA files when supplying reference genomes.\n\n";
+				}
+				# Check that bases are only A,T,C,G,N (see if you can match any non-newline character except AaTtCcGgNn)
+				unless ($_ =~ /^[AaTtCcGgNn\n]+$/) {
+					die "ERROR: The genome sequence in file $file appears to contain non-standard bases (those other than A, T, C, G, and N).  Please replace ambiguities in your sequence with N's before repeating your analysis.\n\n";
+				}
+			}
+		}
+		else {
+			die "ERROR: Your genome file $file does not appear to be formatted properly as a single-entry FASTA sequence.\n\n";
+		}
+		close INPUT;
+	}
+	else {
+		die "ERROR: Cannot locate user-specified genome file $file!\n\n";	
+	}
 }
 
 sub write_GEO_readme {
