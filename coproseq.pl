@@ -23,6 +23,9 @@ use Getopt::Long;
 use Cwd;
 use IO::File;
 
+# Make sure we have the latest version from git.
+system('./.git-status-tester.sh');
+
 my $allfiles = '';							# Default: all intermediate files not related to a used barcode are deleted/not created
 my $bcseqs;									# Default: barcode sequence file name is undefined
 my $input;									# Default: location of input file is undefined
