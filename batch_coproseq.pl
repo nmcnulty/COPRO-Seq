@@ -19,6 +19,9 @@ use barcodes;
 use genomecodes;
 use Cwd;
 
+# Make sure we have the latest version from git.
+system("$FindBin::Bin/.git-status-tester.sh");
+
 # Variables for interacting with the microbialomics server (-ncbi not invoked)
 my $db_name = "microbialomics_npm_mw";
 my $host = "hamlet";
