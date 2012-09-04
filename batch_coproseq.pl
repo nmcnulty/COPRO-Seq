@@ -54,7 +54,9 @@ my $IGS_calc_file_path = "calcIGS.sh";
 my $summarize_file_path = "summarize.sh";
 
 # Options declarations
-my $google_key = "0AhsSO_Vep9tqdFJFTjh1S0UyZFRmeFBHamdKU3I5RHc";
+# Google key for spreadsheet template: 0AhsSO_Vep9tqdFlkSjBFWktTajl6R2hBcjJ0bDE2aGc
+# Google key for Nate's spreadsheet: 0AhsSO_Vep9tqdDlzVXlJSWRPUVgxNWxkVVFJOE4tQ0E
+my $google_key = "";
 my ($allfiles, $GEO, $group, $ncbi, $mapping_file_path, $IGS_table_file, $single_cpu);
 my $mismatches_allowed = 0;
 my $readsize = 25;	# Length AFTER trimming off barcode
