@@ -1,0 +1,4 @@
+# Ignore everything in this directory (contents are too large for inclusion in repository)
+*
+# Except this dot file
+!.gitignore
