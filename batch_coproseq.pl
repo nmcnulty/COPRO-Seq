@@ -571,8 +571,6 @@ sub squash_genomes {
 
 sub download_genomes {
 	my ($species_list_ref, $source) = @_;
-	if (! -d $genomesdir)	{	`mkdir $genomesdir`;	}
-	else {	print "Warning: Directory 'genomes' already exists.\n";	}
 
 	if ($source eq 'ncbi') {
 		print "\nStarting genome downloads from NCBI...\n\n";
@@ -883,6 +881,10 @@ sub prepare_references {
 	my ($internal_genome_accs, $external_genome_paths) = @_;
 	my @species_names;
 	
+	# Make genomes directory here so that it's in place for user-supplied and/or microbialomics files to be placed in
+	if (! -d $genomesdir)	{	`mkdir $genomesdir`;	}
+	else {	print "Warning: Directory 'genomes' already exists.\n";	}
+
 	# 1) Handle microbialomics (internal) genomes...
 
 	if ($ncbi) {
