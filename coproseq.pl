@@ -231,10 +231,14 @@ my @genome_names;
 print "Compiling summary and mapping files for each of your " . (scalar @barcodes) . " barcoded samples...\n";
 foreach (@genome_files) {
 	if ($_ =~ /\.2bpb$/) {
-		my @file_name_parts = split (/\./, $_);
-		push(@genome_names, $file_name_parts[0]);	# Grab the genome name component of the filename (e.g. "B_caccae" from "B_caccae.fas.2bpb")
+		my $trimmed_name;
+		($trimmed_name = $_) =~ s/\.2bpb$//;
+		print "Found genome file for species with name $trimmed_name\n";
+		#my @file_name_parts = split (/\./, $_);
+		#push(@genome_names, $file_name_parts[0]);	# Grab the genome name component of the filename (e.g. "B_caccae" from "B_caccae.fas.2bpb")
+		push(@genome_names, $trimmed_name);
 	}
-}		
+}
 foreach (@barcodes) {
 	my $q = $_;
 	my $filestring1 = "$prefix"."_"."$samplesbybarcode{$_}"."_specieshits_".($readsize - $bcsize)."bp_".$mismatches_allowed."MM.hitratios"; # (e.g. "99_1_AATT_specieshits_16bp_0MM.txt")
@@ -526,6 +530,9 @@ sub detect_seq_file_type {
 	return $file_type;
 }
 
+# I've updated the subroutine below to create files that will not end in an empty line, based on
+# my belief that empty lines at the end of the outputs was causing Eland to throw scary error messages,
+# but this output needs to be double-checked still to confirm that I haven't introduced any problems
 sub parse_seq_file_by_bc {
 	my ($seq_file_type, $ref_to_bc_array, $bcsize) = @_;
 	unless (($seq_file_type eq 'FASTQ') || ($seq_file_type eq 'SCARF')) {
@@ -558,7 +565,13 @@ sub parse_seq_file_by_bc {
 				$bc_tallies{$bc}++;	# Tally a hit for each n-mer barcode seen in SCARF file (even those not expected)
 				if ($barcodes_seen{$bc}) {
 					my $fh = $filehandlehash{$bc};
-					print $fh ">$SCARFline[1]\:$SCARFline[2]\:$SCARFline[3]\:$SCARFline[4]\n".substr($SCARFline[5],$bcsize,$readsize-$bcsize)."\n";
+					# If statements below ensure that file ends without a blank line at the end (i.e., go to next line only when a new sequence to add to the output is found)
+					if ($bc_tallies{$bc} == 1) {	# i.e., this is the first sequence for this barcode
+						print $fh ">$SCARFline[1]\:$SCARFline[2]\:$SCARFline[3]\:$SCARFline[4]\n".substr($SCARFline[5],$bcsize,$readsize-$bcsize);
+					}
+					else {
+						print $fh "\n>$SCARFline[1]\:$SCARFline[2]\:$SCARFline[3]\:$SCARFline[4]\n".substr($SCARFline[5],$bcsize,$readsize-$bcsize);				
+					}
 				}
 			}
 			# (Else: line is an empty line and should be ignored)
@@ -587,7 +600,13 @@ sub parse_seq_file_by_bc {
 					$bc_tallies{$bc}++;
 					if ($barcodes_seen{$bc}) {
 						my $fh = $filehandlehash{$bc};
-						print $fh ">$header\n".substr($FASTQentry[1],$bcsize,$readsize-$bcsize)."\n";	
+						# If statements below ensure that file ends without a blank line at the end (i.e., go to next line only when a new sequence to add to the output is found)
+						if ($bc_tallies{$bc} == 1) {	# i.e., this is the first sequence for this barcode
+							print $fh ">$header\n".substr($FASTQentry[1],$bcsize,$readsize-$bcsize);	
+						}
+						else {
+							print $fh "\n>$header\n".substr($FASTQentry[1],$bcsize,$readsize-$bcsize);	
+						}
 					}
 					$latest_entry = "";
 				}
