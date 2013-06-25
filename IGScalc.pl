@@ -55,7 +55,7 @@ GetOptions (
 ) or die usage();
 
 # Global constants for easy manipulation
-my $MEMREQ = "24G";			# Memory that will be requested for eland alignment jobs
+my $MEMREQ = "8G";			# Memory that will be requested for eland alignment jobs
 my $JOB_CHECK_PAUSE = 10;	# Number of seconds to wait between checking status of all Eland jobs; Err on the side of keeping this a little long (the method
 							#	used for checking job status is kind of clunky and will hammer the file server if you try to do it too often for too many files)
 
