@@ -1,0 +1,1 @@
+perl ../batch_coproseq.pl -k 0AhsSO_Vep9tqdGNTWDZuSHZKaTQ1RXVMUGZ3ZUFjd3c -g A -i IGS.table -m demo.mapping -l 30 -s
