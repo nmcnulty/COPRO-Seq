@@ -5,6 +5,11 @@
 #	has completed its operations (using the -G switch)
 #	Important: Cannot run this after cleanup.sh has been run (mention this in manual)
 
+# Improvements needed: currently, this script is not equipped to consider genomes specified in
+#	the 'external genome paths' field of project.info when specifying 'organism' in the GEO table
+#	file created; this may take a fair bit of effort to implement, and for now, I would recommend
+#	just using workarounds (i.e., manually adjusting the table at the end)
+
 # Usage example:
 #	perl prepare_geo_table.pl -g A -m ./inputs/NM1200.mapping -s ./inputs/project.info
 
@@ -17,7 +22,8 @@
 use strict;
 use warnings;
 use Getopt::Long qw(:config no_ignore_case);
-use lib '/home/comp/jglab/nmcnulty/coproseq';	# Tell perl where to find barcodes.pm, genomecodes.pm
+use FindBin;
+use lib "$FindBin::Bin/lib";	# Tell perl where to find barcodes.pm, genomecodes.pm (looks in folder where prepare_geo_table.pl is stored)
 use barcodes;
 use genomecodes;
 use Digest::MD5 qw(md5_hex);
@@ -66,29 +72,35 @@ my $mapping_hash = load_mapping_file($mapping_file_path);
 
 open(OUTPUT, ">$output_file_path") || die "Can't open output file $output_file_path!\n";
 print OUTPUT "Sample name\ttitle\tsource name\torganism\tcharacteristics: tag\tcharacteristics: ",
-	"tag\tcharacteristics: tag\tmolecule\tdescription\tprocessed data file\tprocessed data file ",
-	"build\tprocessed data file type\tprocessed file MD5 checksum\traw file\traw file type\traw file",
-	" MD5 checksum\tbarcode\n";
+	"tag\tcharacteristics: tag\tmolecule\tdescription\tprocessed data file name\t",
+	"processed data file type\tprocessed data file MD5 checksum\traw file name\traw file type\traw file",
+	" MD5 checksum\tinstrument model\tread length\n";
 for my $p (@$filtered_data_hash) {		# For each row of the spreadsheet (i.e. each run/lane combo)...
 	my $filteredsamples = get_filtered_sample_list($p, $mapping_hash);
 	for my $s (@$filteredsamples) {		# For each sample in this row's run/lane combo...
-		my $prefix = "run".$p->{run}."_"."lane".$p->{lane}."_".$$mapping_hash{$p->{pool}}{$s}."_".$s;
+		my $prefix = "machine".$p->{machine}."_run".$p->{run}."_lane".$p->{lane}."_".$$mapping_hash{$p->{pool}}{$s}."_".$s;
 		unless (-f "$prefix\.hitratios") {	die "Cannot find one of your .hitratios files: $prefix\.hitratios\n"; }
 		my $hitsmd5 = md5_hex("$prefix\.hitratios");
 		unless (-f "$prefix\.scarf") {		die "Cannot find one of your .scarf files: $prefix\.scarf\n"; }
 		my $scarfmd5 = md5_hex("$prefix\.scarf");
  		
- 		print OUTPUT	"run".$p->{run}."_lane".$p->{lane}."_".$$mapping_hash{$p->{pool}}{$s}."_".$s."\t",	# "Sample name"
- 						$s."\t\t",																			# "title" + blank column
- 						process_genome_field($p->{genomes})."\t",											# "organism"
- 						"\t\t\t",
- 						"genomic DNA\t\t",																	# "molecule" + blank column
- 						"$prefix\.hitratios\t\t",															# "processed data file" + blank column
- 						"txt\t",																			# "processed data file type"
- 						$hitsmd5."\t",																		# "processed file MD5 checksum"
- 						"$prefix\.scarf\t",																	# "raw file"
- 						"Illumina_native (SCARF)\t",														# "raw file type"
- 						$scarfmd5."\t\t\n";																	# "raw file MD5 checksum" + blank column
+ 		print OUTPUT	"machine".$p->{machine}."_run".$p->{run}."_lane".$p->{lane}."_".$$mapping_hash{$p->{pool}}{$s}."_".$s."\t",	# "Sample name"
+ 						$s."\t",																									# "title"
+ 						'Defined bacterial assemblage from the feces of a gnotobiotic mouse'."\t",									# "source"
+ 						process_genome_field($p->{internal_genome_accessions})."\t",												# "organism"
+ 						"\t",																										# "characteristics: tag"
+ 						"\t",																										# "characteristics: tag"
+ 						"\t",																										# "characteristics: tag"
+ 						'genomic DNA'."\t",																							# "molecule"
+ 						"\t",																										# "description (complete within Excel later)"
+ 						"$prefix\.hitratios"."\t",																					# (processed data file) "file name"
+ 						'txt'."\t",																									# (processed data file) "file type"
+ 						$hitsmd5."\t",																								# (processed data file) "file checksum"
+ 						"$prefix\.scarf"."\t",																						# (raw data file) "file name"
+ 						'scarf'."\t",																								# (raw data file) "file type"
+ 						$scarfmd5."\t",																								# (raw data file) "file checksum"
+						$p->{platform}."\t",																						# "instrument model"
+						'36'."\n";																									# "read length"
 	}
 }
 

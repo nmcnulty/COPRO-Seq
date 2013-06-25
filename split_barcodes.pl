@@ -7,17 +7,23 @@
 # might be worth rewriting in C sometime.....
 
 use strict;
+use Getopt::Long qw(:config no_ignore_case);
 
 my $SCARF = 1;
 my $SCARF_ASCII = 2;
 
-my $barcode_file = shift;
-my $solexa_file  = shift;
-my $barcode_out = shift;
+my ($barcode_file, $solexa_file, $barcode_stats_flag, $trim_flag);
 
-$barcode_out = $solexa_file . ".barcode_stats" if $barcode_out;
+GetOptions(
+	"b|barcodefile=s"			=> \$barcode_file,
+	"s|solexafile=s"			=> \$solexa_file,
+	"r|report"					=> \$barcode_stats_flag,
+	"t|trim"					=> \$trim_flag
+) or die "Usage: split_barcodes.pl [-b barcode file] [-s sequence file] [-r (report barcode stats)] [-t (trim barcodes off after demultiplexing)]\n";
 
-die "Usage: split_barcodes.pl <barcode_file> <solexa_file> [print_barcode_stats (1 = yes)]\n" unless $barcode_file && $solexa_file;
+my $barcode_out = $solexa_file . ".barcode_stats" if $barcode_stats_flag;
+
+die "Usage: split_barcodes.pl [-b barcode file] [-s sequence file] [-r (report barcode stats)] [-t (trim barcodes off after demultiplexing)]\n" unless $barcode_file && $solexa_file;
 
 my ($barcodes, $barcode_to_name) = read_barcodes($barcode_file);
 split_solexa($barcodes, $solexa_file, $barcode_out, $barcode_to_name);
@@ -43,26 +49,22 @@ sub split_solexa {
 
 		my $missed_barcode = 1;
 		my @pieces = split /:/, $_;
-#		print "@pieces\n";
 		my $bc = substr($pieces[5], 0, $barcode_len);
-#		print "bc\t$bc\n";
 
 		if (my $fh = $barcodes->{$bc}) { # match barcode
 			$missed_barcode = 0;
 			$counts{$bc}++;
-			$pieces[5] = substr($pieces[5], $barcode_len);
-#			print "new piece $pieces[5]\n";
-			if ($format_type == $SCARF_ASCII) {
-#				print "before $pieces[6]\n";
-				$pieces[6]=~ s/^\s*\D{$barcode_len}//;
-#				print "after $pieces[6]\n";
+			# Do trimming if -t flag was used; otherwise, do not modify sequence or quality scores
+			if ($trim_flag) {
+				$pieces[5] = substr($pieces[5], $barcode_len);
+				if ($format_type == $SCARF_ASCII) {
+					$pieces[6]=~ s/^\s*\D{$barcode_len}//;
+				}
+				elsif ($format_type == $SCARF) {
+					$pieces[6] =~ s/^\s*([-\d]+\s){$barcode_len}//
+				}
 			}
-			elsif ($format_type == $SCARF) {
-				$pieces[6] =~ s/^\s*([-\d]+\s){$barcode_len}//
-			}
-			
 			my $seq = join ":", @pieces;
-#			print "$seq\n";
 			print $fh "$seq\n";
 		}
 
@@ -122,7 +124,6 @@ sub read_barcodes {
 	open (IN, $in) or die "can't open $in: $!\n";
 
 	my @fileHandles;
-#	my @barcodes;
 	my %barcodes;
 	my %seq_to_barcode_name;
 	while (<IN>) {
@@ -136,10 +137,7 @@ sub read_barcodes {
 		else {
 			($barcode, $filename) = @stuff;
 		}
-#		my ($barcode, $filename) = split /\t/;
-	#	print "have $barcode $filename\n";
 	 	open my $out, ">$filename" or die "can't open $filename: $!\n";
-	#	push @fileHandles, $out;
 		$barcodes{$barcode} = $out; # barcode points to the file handle
 		if ($barcode_name) {
 			$seq_to_barcode_name{$barcode} = $barcode_name;

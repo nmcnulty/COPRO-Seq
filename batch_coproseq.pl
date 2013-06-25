@@ -18,6 +18,7 @@ use File::Basename;
 use barcodes;
 use genomecodes;
 use Cwd;
+use Term::ReadKey;
 
 # Make sure we have the latest version from git.
 system("$FindBin::Bin/.git-status-tester.sh");
@@ -111,12 +112,6 @@ check_for_absent_groups($filtered_data_hash, $groups_hash_ref);
 # Genome download and squashing (reference database creation for aligner)
 #===============================================================================
 
-# NEED TO ADD CODE HERE THAT ALSO GRABS INFORMATION IN GOOGLE DOC FOR
-#	AN 'OTHER_GENOMES' COLUMN WHERE USERS CAN DEFINE THE LOCATION OF 
-#	NON-MICROBIALOMICS GENOMES THAT THEY MIGHT WANT TO ALIGN TO
-# ALSO NEED TO ALLOW FOR AN EMPTY 'MICROBIALOMICS_GENOMES' COLUMN IF
-#	'OTHER_GENOMES' CONTAINS AT LEAST ONE LEGITIMATE GENOME PATH
-
 my $internal_genome_acc_list = get_internal_genome_acc($filtered_data_hash);
 
 my $external_genome_paths_list = get_external_genome_paths($filtered_data_hash);
@@ -151,17 +146,17 @@ if ($GEO) {
 	my $a;
 	for my $p (@$filtered_data_hash) {
 		my $filteredsamples = get_filtered_sample_list($p, $mapping_hash);
-		my $new_bc_file = $p->{run}."_".$p->{lane}."\.bc_mod";
-		my $scarf_to_split = "../".$p->{run}."_".$p->{lane}.".scarf";
-		make_modified_bc_file($p->{run}, $p->{lane}, 			
+		my $new_bc_file = $p->{machine}."_".$p->{run}."_".$p->{lane}."\.bc_mod";
+		my $scarf_to_split = "../".$p->{machine}."_".$p->{run}."_".$p->{lane}.".seq";
+		make_modified_bc_file($p->{machine}, $p->{run}, $p->{lane}, 			
 			\%{$$mapping_hash{$p->{pool}}}, $filteredsamples,
 			"GEO\/$new_bc_file");
 		$split_sh_commands .= 
-			"perl ../../split_barcodes.pl $new_bc_file $scarf_to_split\n";
+			"perl ../../split_barcodes.pl -b $new_bc_file -s $scarf_to_split\n";
 		foreach(@$filteredsamples) {
 			$move_sh_commands .= 
 				"cp ../hitratios/".$p->{machine}.'_'.$p->{run}.'_'.$p->{lane}.'_'.$_.'_' .
-				"specieshits_*bp_*MM.hitratios run".$p->{run} .
+				"specieshits_*bp_*MM.hitratios machine".$p->{machine}.'_run'.$p->{run} .
 				'_lane'.$p->{lane}."_".$$mapping_hash{$p->{pool}}{$_} .
 				'_'.$_.".hitratios\n";
 		}
@@ -239,20 +234,22 @@ sub make_igs_table_file {
 sub validate_IGS_table {
 	my ($table_file_path, $kmerlength, $species_list_ref) = @_;
 	my $HoH_ref = table_file_to_HoH($table_file_path);
-	my %HoH = %$HoH_ref;	# Dereference to make things easier
+	my %HoH = %$HoH_ref;	# Dereference to make things easier; hash keys (which are table column headers) will be kmer sizes
 	print "\nValidating IGS table...\n";
 	# Check for correct read size
 	if (! defined $HoH{$readsize}) {
-		print 	"Warning: Could not detect the read size passed at startup in your IGS table.  A ",
+		print 	"WARNING: Could not detect the read size passed at startup in your IGS table.  A ",
 				"new IGS table will have to be calculated by executing calcIGS.sh.\n";
+		press_any_key();
 		return 0;
 	}
 	print "Read size specified at startup detected in IGS table.\n";
 	# Check that all species needed are present
 	foreach(@$species_list_ref) {
 		if(! defined $HoH{$readsize}{$_}) {
-			print	"The IGS value for at least one genome ($_) is missing from your IGS table.  A new ",
+			print	"WARNING: the IGS value for at least one genome ($_) is missing from your IGS table.  A new ",
 					"IGS table will have to be calculated by executing calcIGS.sh.\n";
+			press_any_key();
 			return 0;
 		}
 	}
@@ -824,7 +821,7 @@ sub write_GEO_sh {
 	close SH;
 }
 
-# make_modified_bc_file($p->{run}, $p->{lane}, \%$mapping_hash{$p->{pool}}, \@filteredsamples, $filepath);
+# make_modified_bc_file($p->{machine}, $p->{run}, $p->{lane}, \%$mapping_hash{$p->{pool}}, \@filteredsamples, $filepath);
 
 # Need:
 # The mapping hash for the current pool (to know which barcodes go with which samples)
@@ -839,12 +836,12 @@ sub write_GEO_sh {
 # TGGT	run100_lane1_TGGT.scarf
 
 sub make_modified_bc_file {
-	my ($run, $lane, $mapping_hash_specific_to_pool, $samples_array, $filepath) = @_;
+	my ($machine, $run, $lane, $mapping_hash_specific_to_pool, $samples_array, $filepath) = @_;
 	open(BC, ">$filepath") || die "Can't open modified .bc file $filepath!\n";
 	my ($bcseq, $bcsplit_scarf_file);
 	foreach(@$samples_array) { 
 		$bcseq = $$mapping_hash_specific_to_pool{$_};
-		$bcsplit_scarf_file = "run".$run."_lane".$lane."_".$bcseq."_".$_."\.scarf";
+		$bcsplit_scarf_file = "machine".$machine."_run".$run."_lane".$lane."_".$bcseq."_".$_."\.scarf";
 		print BC $bcseq."\t".$bcsplit_scarf_file."\n";
 	}
 	close BC;
@@ -920,7 +917,7 @@ sub prepare_references {
 		# First, check that all user-supplied files look OK
 		foreach my $a (@$external_genome_paths) {
 			validate_user_supplied_genome($a);
-			push(@species_names, basename($a));
+			push(@species_names, basename($a));	# Here, basename() will return whole filename, including extension suffix
 		}
 		# Then, report which files will be included
 		print	"The following non-microbialomics genomes will be included ",
@@ -1036,9 +1033,17 @@ sub check_for_absent_groups {
 			$missing .= $_."\n";
 		}
 		die	"ERROR: ".scalar(keys %groups_missing_in_spreadsheet)." group ",
-			"names passed with '-g' could not be found in your analysis ",
+			"name(s) passed with '-g' could not be found in your analysis ",
 			"spreadsheet:\n\n$missing\n";
 	}
+}
+
+sub press_any_key {
+	ReadMode('cbreak');
+	print "Press any key to continue...";
+	ReadKey(0);
+	ReadMode('normal');
+	print "\n";
 }
 
 # APPENDIX A

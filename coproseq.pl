@@ -287,16 +287,19 @@ foreach (@barcodes) {
 		if ($elandfields[2] =~ /^U/) {				# If Eland-reported match code suggests a unique hit was found (either "U0", "U1", or "U2")
 			# Must only count genome hits if the number of mismatches required to make a hit was less than or equal to the user-defined threshold
 			if (($mismatches_allowed == 0) && ($elandfields[2] eq "U0")) {
-				my @genomefield = split(/\./, $elandfields[6]);		# Grab the genome Eland hit uniquely (which may have an extraneous extension, like ".fas")
-				$hit_counts{$genomefield[0]}++;						
+				#my @genomefield = split(/\./, $elandfields[6]);		# Grab the genome Eland hit uniquely (which may have an extraneous extension, like ".fas")
+				#$hit_counts{$genomefield[0]}++;
+				$hit_counts{$elandfields[6]}++;						
 			}
 			elsif (($mismatches_allowed == 1) && ($elandfields[2] eq "U1" || $elandfields[2] eq "U0")) {
-				my @genomefield = split(/\./, $elandfields[6]);		# Grab the genome Eland hit uniquely (which may have an extraneous extension, like ".fas")
-				$hit_counts{$genomefield[0]}++;						
+				#my @genomefield = split(/\./, $elandfields[6]);		# Grab the genome Eland hit uniquely (which may have an extraneous extension, like ".fas")
+				#$hit_counts{$genomefield[0]}++;
+				$hit_counts{$elandfields[6]}++;
 			}
 			elsif (($mismatches_allowed == 2) && ($elandfields[2] eq "U2" || $elandfields[2] eq "U1" || $elandfields[2] eq "U0")) {
-				my @genomefield = split(/\./, $elandfields[6]);		# Grab the genome Eland hit uniquely (which may have an extraneous extension, like ".fas")
-				$hit_counts{$genomefield[0]}++;						
+				#my @genomefield = split(/\./, $elandfields[6]);		# Grab the genome Eland hit uniquely (which may have an extraneous extension, like ".fas")
+				#$hit_counts{$genomefield[0]}++;
+				$hit_counts{$elandfields[6]}++;						
 			}
 		}
 	}
