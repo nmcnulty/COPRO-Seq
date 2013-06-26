@@ -48,7 +48,7 @@ my $summariesdir = "summaries";
 my $GEOdir = "GEO";
 my $squashedgenomesdir = "genomes/squashed";
 my $project_data_path = "project.info";
-my $getdata_file_path = "getdata.sh";
+#my $getdata_file_path = "getdata.sh";
 my $align_file_path = "align.sh";
 my $cleanup_file_path = "cleanup.sh";
 my $IGS_calc_file_path = "calcIGS.sh";
@@ -120,8 +120,11 @@ my @species_names = prepare_references($internal_genome_acc_list, $external_geno
 squash_genomes($squashedgenomesdir);
 print "\n";
 
-# Prepare 'getdata.sh'
-make_get_data_file($filtered_data_hash, $getdata_file_path);
+# Prepare 'getdata.sh' (now deprecated)
+#make_get_data_file($filtered_data_hash, $getdata_file_path);
+
+# Create symbolic links to original data files
+create_links_to_data($filtered_data_hash);
 
 # Load up mapping hash with contents of mapping file
 # $mapping_hash = reference to HoH{pool}{sample}=barcode
@@ -136,9 +139,9 @@ for my $p (@$filtered_data_hash) {
 		$filteredsamples, $p->{machine}.'_'.$p->{run}.'_'.$p->{lane}."\.bc");
 }
 
-# Prepare '.bc_mod' files and 'split_scarfs.sh' if -G switch was turned on
+# Prepare '.bc_mod' files as well as 'move_hits.sh' and 'split_seqs.sh' if -G switch was turned on
 # Makes preparation of barcode-split SCARF files easier for the user
-# Note: split_scarfs.sh must be run AFTER getdata.sh
+# Note: split_seqs.sh must be run AFTER getdata.sh
 if ($GEO) {	
 	# Declare variables for storing running tally of commands that will be
 	# the contents of GEO-related .sh files
@@ -147,21 +150,23 @@ if ($GEO) {
 	for my $p (@$filtered_data_hash) {
 		my $filteredsamples = get_filtered_sample_list($p, $mapping_hash);
 		my $new_bc_file = $p->{machine}."_".$p->{run}."_".$p->{lane}."\.bc_mod";
-		my $scarf_to_split = "../".$p->{machine}."_".$p->{run}."_".$p->{lane}.".seq";
+		my $seqs_to_split = $p->{machine}."_".$p->{run}."_".$p->{lane}.".seq";
+		my $seqs_format = infer_seq_format($seqs_to_split);
 		make_modified_bc_file($p->{machine}, $p->{run}, $p->{lane}, 			
 			\%{$$mapping_hash{$p->{pool}}}, $filteredsamples,
-			"GEO\/$new_bc_file");
+			"GEO\/$new_bc_file", $seqs_format);
 		$split_sh_commands .= 
-			"perl ../../split_barcodes.pl -b $new_bc_file -s $scarf_to_split\n";
+			"perl ../../split_barcodes.pl -b $new_bc_file -s ../$seqs_to_split -c\n";
+		# Create commands for copying/compressing the original .hitratios files to a new location
 		foreach(@$filteredsamples) {
 			$move_sh_commands .= 
-				"cp ../hitratios/".$p->{machine}.'_'.$p->{run}.'_'.$p->{lane}.'_'.$_.'_' .
-				"specieshits_*bp_*MM.hitratios machine".$p->{machine}.'_run'.$p->{run} .
+				"gzip -c ../hitratios/".$p->{machine}.'_'.$p->{run}.'_'.$p->{lane}.'_'.$_.'_' .
+				"specieshits_*bp_*MM.hitratios > machine".$p->{machine}.'_run'.$p->{run} .
 				'_lane'.$p->{lane}."_".$$mapping_hash{$p->{pool}}{$_} .
-				'_'.$_.".hitratios\n";
+				'_'.$_.".hitratios\.gz\n";
 		}
 	}
-	write_GEO_sh(">./GEO/split_scarfs.sh", $split_sh_commands);
+	write_GEO_sh(">./GEO/split_seqs.sh", $split_sh_commands);
 	write_GEO_sh(">./GEO/move_hits.sh", $move_sh_commands);
 	$make_table_sh_commands = "perl ../../prepare_geo_table.pl -g $group " .
 		"-m ../$mapping_file_path -s ../$project_data_path -o GEO_table.txt\n";
@@ -340,7 +345,7 @@ sub make_cleanup_file {
 	my ($spreadsheet_hash, $filepath) = @_;
 	open (CLEANUP, ">$filepath") || die "ERROR: Can't open $filepath!\n";
 	print CLEANUP "rm $project_data_path\n";
-	print CLEANUP "rm $getdata_file_path\n";
+#	print CLEANUP "rm $getdata_file_path\n";
 	print CLEANUP "rm $align_file_path\n";
 	print CLEANUP "rm $cleanup_file_path\n";
 	print CLEANUP "if [ -f $align_file_path\* ];\nthen\nrm $align_file_path*\nfi\n";
@@ -509,6 +514,49 @@ sub test_bc_list_compatibility {
 	return 1;
 }
 
+
+sub create_links_to_data {
+	my $spreadsheet_hash = shift;
+	my %paths_created;
+	# For each row in the filtered spreadsheet hash...
+	for my $p (@$spreadsheet_hash) {
+		# If a machine, run and lane are defined...
+		if ($p->{machine} && $p->{run} && $p->{lane}) {
+			if ($p->{path}) {
+				my $source_path = $p->{path};
+				my $link_path = $p->{machine}.'_'.$p->{run}.'_'.$p->{lane}.'.seq';
+				# If we haven't seen this file before (don't want to create the same link over and over)...
+				if (!$paths_created{$link_path}) {
+					if (-e $link_path) {
+						print "Skipping creation of symbolic link to $source_path (a link to this file ",
+							"already exists)...'\n";
+					}
+					else {
+						if (-e $source_path) {
+							print "Creating symbolic link to $source_path...\n";
+							`ln -s $source_path $link_path`;
+							print "Done.\n";
+						}
+						else {
+							die "Cannot locate input sequence file $source_path.  Please confirm that you've specified the correct path to your sequencing results in your project spreadsheet.\n";
+						}
+					}
+					$paths_created{$link_path}=1;
+				}
+			}
+			else {
+				die "\nERROR: You have not specified a full file path for pool $p->{pool}!\n\n";
+			}
+		}
+		else {
+			die "\nERROR: the machine and/or run and/or lane # for pool $p->{pool} are not ",
+			"specified. Check your spreadsheet!\n\n";
+		}
+	}
+	return 1;
+}
+
+# Subroutine below now deprecated in favor of creating symbolic links on the fly during setup of project
 sub make_get_data_file {
 	my ($spreadsheet_hash, $filepath) = @_;
 	open (GETDATA, ">$filepath") || die "ERROR: Can't open $filepath!\n";
@@ -821,7 +869,7 @@ sub write_GEO_sh {
 	close SH;
 }
 
-# make_modified_bc_file($p->{machine}, $p->{run}, $p->{lane}, \%$mapping_hash{$p->{pool}}, \@filteredsamples, $filepath);
+# make_modified_bc_file($p->{machine}, $p->{run}, $p->{lane}, \%$mapping_hash{$p->{pool}}, \@filteredsamples, $filepath, $seqs_format);
 
 # Need:
 # The mapping hash for the current pool (to know which barcodes go with which samples)
@@ -830,19 +878,20 @@ sub write_GEO_sh {
 # The list of (filtered) samples from that pool to include
 # The run and lane numbers (for creating the filenames of the barcode-split SCARFs in the .bc_new file)
 # The .bc_new filepath
+# The format of the original .seq file (either 'scarf' or 'fastq')
 
 # Example output:
 # AAAT	run100_lane1_AAAT.scarf
 # TGGT	run100_lane1_TGGT.scarf
 
 sub make_modified_bc_file {
-	my ($machine, $run, $lane, $mapping_hash_specific_to_pool, $samples_array, $filepath) = @_;
+	my ($machine, $run, $lane, $mapping_hash_specific_to_pool, $samples_array, $filepath, $format) = @_;
 	open(BC, ">$filepath") || die "Can't open modified .bc file $filepath!\n";
-	my ($bcseq, $bcsplit_scarf_file);
+	my ($bcseq, $bcsplit_seqs_file);
 	foreach(@$samples_array) { 
 		$bcseq = $$mapping_hash_specific_to_pool{$_};
-		$bcsplit_scarf_file = "machine".$machine."_run".$run."_lane".$lane."_".$bcseq."_".$_."\.scarf";
-		print BC $bcseq."\t".$bcsplit_scarf_file."\n";
+		$bcsplit_seqs_file = "machine".$machine."_run".$run."_lane".$lane."_".$bcseq."_".$_."\.".$format;
+		print BC $bcseq."\t".$bcsplit_seqs_file."\n";
 	}
 	close BC;
 }
@@ -1044,6 +1093,35 @@ sub press_any_key {
 	ReadKey(0);
 	ReadMode('normal');
 	print "\n";
+}
+
+# This is a clunky, ugly piece of code, but it should work as a hack for now
+# To be detected as FASTQ formatted, a file must:
+#	1) Have a first line that starts with "@" (as the header lines for FASTQ sequences do)
+#	2) Have a second line with some sequence of one or more A/T/C/G/N bases
+#	3) Have a third line that consists only of the character '+'
+# To be detected as SCARF formatted, a file must:
+#	1) Have a first line that consists of 7 terms of any character type, separated by colons (i.e., 6 colons total)
+sub infer_seq_format {
+	my $filename = shift;
+	open(TEST, $filename) || die "Couldn't open input file $filename when attempting to detect file type!\n";
+	my $firstline = <TEST>;
+	if ($firstline =~ m/^@/) {
+		my $secondline = <TEST>;
+		if ($secondline =~ /[ATCGN]+/) {
+			my $thirdline = <TEST>;
+			if ($thirdline =~ m/^\+$/) {
+				return 'fastq';		
+			}
+		}
+	}
+	elsif ($firstline =~ /(.+?)\:(.+?)\:(.+?)\:(.+?)\:(.+?)\:(.+?)\:(.+?)/) {
+		return 'scarf';
+	}
+	else {
+		die "Your input file $filename does not appear to conform to either the SCARF or FASTQ formats. This script only supports these two file types.\n";
+	}
+	close TEST;
 }
 
 # APPENDIX A
