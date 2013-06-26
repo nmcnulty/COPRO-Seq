@@ -12,24 +12,27 @@ use Getopt::Long qw(:config no_ignore_case);
 my $SCARF = 1;
 my $SCARF_ASCII = 2;
 
-my ($barcode_file, $sequence_file, $barcode_stats_flag, $trim_flag);
+my ($barcode_file, $sequence_file, $barcode_stats_flag, $trim_flag, $compress_output);
 
 GetOptions(
 	"b|barcodes=s"				=> \$barcode_file,
+	"c|compress"				=> \$compress_output,
 	"s|seqs=s"					=> \$sequence_file,
 	"r|report"					=> \$barcode_stats_flag,
 	"t|trim"					=> \$trim_flag
-) or die "Usage: split_barcodes.pl [-b barcode file] [-s sequence file] [-r (report barcode stats)] [-t (trim barcodes off after demultiplexing)]\n";
+) or die "Usage: split_barcodes.pl [-b barcode file] [-s sequence file] [-c (compress outputs using gzip)] [-r (report barcode stats)] [-t (trim barcodes off after demultiplexing)]\n";
 
 my $barcode_out = $sequence_file . ".barcode_stats" if $barcode_stats_flag;
 
-die "Usage: split_barcodes.pl [-b barcode file] [-s sequence file] [-r (report barcode stats)] [-t (trim barcodes off after demultiplexing)]\n" unless $barcode_file && $sequence_file;
+die "Usage: split_barcodes.pl [-b barcode file] [-s sequence file] [-c (compress outputs using gzip)] [-r (report barcode stats)] [-t (trim barcodes off after demultiplexing)]\n" unless $barcode_file && $sequence_file;
 
-my ($barcodes, $barcode_to_name) = read_barcodes($barcode_file);
-split_sequences($barcodes, $sequence_file, $barcode_out, $barcode_to_name);
+my ($barcodes, $barcode_to_name, $files_created) = read_barcodes($barcode_file);
+split_sequences($barcodes, $sequence_file, $barcode_out, $barcode_to_name, $files_created);
+
+exit;
 
 sub split_sequences {
-	my ($barcodes, $in, $barcode_out, $barcode_to_name)=@_;
+	my ($barcodes, $in, $barcode_out, $barcode_to_name, $paths_by_bc)=@_;
 	
 	my ($num_read, $num_missed) = 0;
 	my %counts;
@@ -38,7 +41,8 @@ sub split_sequences {
 
 	# Make best guess about what type of sequence file is being split
 	my $seq_format = infer_seq_format($sequence_file);
-
+	my %files_created;	# Used to keep track of all files created so they can be compressed later
+	
 	if ($seq_format eq 'scarf') {
 		my $scarf_type = 0;
 		open(IN, $in) || die "Can't open input file $in!\n";
@@ -49,8 +53,8 @@ sub split_sequences {
 			my $missed_barcode = 1;
 			my @pieces = split /:/, $_;
 			my $bc = substr($pieces[5], 0, $barcode_len);
-
 			if (my $fh = $barcodes->{$bc}) { # match barcode
+				$files_created{$paths_by_bc->{$bc}} = 1;
 				$missed_barcode = 0;
 				$counts{$bc}++;
 				# Do trimming if -t flag was used; otherwise, do not modify sequence or quality scores
@@ -83,6 +87,7 @@ sub split_sequences {
 			my $missed_barcode = 1;
 			my $bc = substr($line2, 0, $barcode_len);
 			if (my $fh = $barcodes->{$bc}) {
+				$files_created{$paths_by_bc->{$bc}} = 1;
 				$missed_barcode = 0;
 				$counts{$bc}++;
 				if ($trim_flag) {
@@ -101,7 +106,7 @@ sub split_sequences {
 	}
 	my $num_matched = $num_read-$num_missed;
 	printf STDERR "\n\t\tSUMMARY STATS\n";
-	printf STDERR "%d of %d (%.1f%%) reads had a barcode match\n", $num_matched, $num_read, ($num_matched/$num_read)*100;
+	printf STDERR "%d of %d reads (%.1f%%) had a barcode match\n", $num_matched, $num_read, ($num_matched/$num_read)*100;
 	printf STDERR "#%d\t%d\t%f\n", $num_matched, $num_read, ($num_matched/$num_read);
 	if ($barcode_out) {
 		open (OUT, ">$barcode_out") or die "can't open $barcode_out: $!\n";
@@ -119,6 +124,15 @@ sub split_sequences {
 		}
 	}
 	close OUT if $barcode_out;
+	
+	# Compress outputs if -c flag turned on
+	if ($compress_output) {
+		foreach my $k (keys %files_created) {
+			print "Compressing file $k...\n";
+			`gzip $k`;
+			print "Done.\n";
+		}
+	}
 }
 
 # This is a clunky, ugly piece of code, but it should work as a hack for now
@@ -180,12 +194,12 @@ sub infer_scarf_type {
 }
 
 sub read_barcodes {
-	my $in=shift;
+	my $in=shift;	# $in = barcode mapping file path
 	open (IN, $in) or die "can't open $in: $!\n";
 
-	my @fileHandles;
 	my %barcodes;
 	my %seq_to_barcode_name;
+	my %file_paths_by_barcode;
 	while (<IN>) {
 		chomp;
 		my (@stuff) = split /\t/;
@@ -198,6 +212,7 @@ sub read_barcodes {
 			($barcode, $filename) = @stuff;
 		}
 	 	open my $out, ">$filename" or die "can't open $filename: $!\n";
+		$file_paths_by_barcode{$barcode} = $filename;
 		$barcodes{$barcode} = $out; # barcode points to the file handle
 		if ($barcode_name) {
 			$seq_to_barcode_name{$barcode} = $barcode_name;
@@ -206,6 +221,5 @@ sub read_barcodes {
 
 	close IN;
 	
-#	return \@fileHandles, \@barcodes;
-	return \%barcodes, \%seq_to_barcode_name;
+	return \%barcodes, \%seq_to_barcode_name, \%file_paths_by_barcode;
 }

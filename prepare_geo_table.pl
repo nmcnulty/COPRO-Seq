@@ -79,10 +79,21 @@ for my $p (@$filtered_data_hash) {		# For each row of the spreadsheet (i.e. each
 	my $filteredsamples = get_filtered_sample_list($p, $mapping_hash);
 	for my $s (@$filteredsamples) {		# For each sample in this row's run/lane combo...
 		my $prefix = "machine".$p->{machine}."_run".$p->{run}."_lane".$p->{lane}."_".$$mapping_hash{$p->{pool}}{$s}."_".$s;
-		unless (-f "$prefix\.hitratios") {	die "Cannot find one of your .hitratios files: $prefix\.hitratios\n"; }
-		my $hitsmd5 = md5_hex("$prefix\.hitratios");
-		unless (-f "$prefix\.scarf") {		die "Cannot find one of your .scarf files: $prefix\.scarf\n"; }
-		my $scarfmd5 = md5_hex("$prefix\.scarf");
+		unless (-f "$prefix\.hitratios\.gz") {	die "Cannot find one of your compressed .hitratios files: $prefix\.hitratios\.gz\n"; }
+		my $hitsmd5 = md5_hex("$prefix\.hitratios\.gz");
+		# Eventually, change this to look for a .scarf.gz and .fastq.gz file (after specifying that split_scarfs.sh pass everything through gzip first
+		my ($seqmd5, $seq_format);
+		if (-f "$prefix\.fastq\.gz") {
+			$seqmd5 = md5_hex("$prefix\.fastq\.gz");
+			$seq_format = 'fastq';
+		}
+		elsif (-f "$prefix\.scarf\.gz") {
+			$seqmd5 = md5_hex("$prefix\.scarf\.gz");
+			$seq_format = 'scarf';
+		}
+		else {
+			die "Cannot find a compressed, demultiplexed sequence file for prefix $prefix!\n";
+		}
  		
  		print OUTPUT	"machine".$p->{machine}."_run".$p->{run}."_lane".$p->{lane}."_".$$mapping_hash{$p->{pool}}{$s}."_".$s."\t",	# "Sample name"
  						$s."\t",																									# "title"
@@ -93,14 +104,14 @@ for my $p (@$filtered_data_hash) {		# For each row of the spreadsheet (i.e. each
  						"\t",																										# "characteristics: tag"
  						'genomic DNA'."\t",																							# "molecule"
  						"\t",																										# "description (complete within Excel later)"
- 						"$prefix\.hitratios"."\t",																					# (processed data file) "file name"
+ 						"$prefix\.hitratios\.gz"."\t",																				# (processed data file) "file name"
  						'txt'."\t",																									# (processed data file) "file type"
  						$hitsmd5."\t",																								# (processed data file) "file checksum"
- 						"$prefix\.scarf"."\t",																						# (raw data file) "file name"
- 						'scarf'."\t",																								# (raw data file) "file type"
- 						$scarfmd5."\t",																								# (raw data file) "file checksum"
+ 						$prefix."\.".$seq_format."\.gz\t",																				# (raw data file) "file name"
+ 						$seq_format."\t",																							# (raw data file) "file type"
+ 						$seqmd5."\t",																								# (raw data file) "file checksum"
 						$p->{platform}."\t",																						# "instrument model"
-						'36'."\n";																									# "read length"
+						"\t\n";																										# "read length"
 	}
 }
 
