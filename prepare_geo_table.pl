@@ -80,15 +80,15 @@ for my $p (@$filtered_data_hash) {		# For each row of the spreadsheet (i.e. each
 	for my $s (@$filteredsamples) {		# For each sample in this row's run/lane combo...
 		my $prefix = "machine".$p->{machine}."_run".$p->{run}."_lane".$p->{lane}."_".$$mapping_hash{$p->{pool}}{$s}."_".$s;
 		unless (-f "$prefix\.hitratios\.gz") {	die "Cannot find one of your compressed .hitratios files: $prefix\.hitratios\.gz\n"; }
-		my $hitsmd5 = md5_hex("$prefix\.hitratios\.gz");
+		my $hitsmd5 = get_MD5_hash("$prefix\.hitratios\.gz");
 		# Eventually, change this to look for a .scarf.gz and .fastq.gz file (after specifying that split_scarfs.sh pass everything through gzip first
 		my ($seqmd5, $seq_format);
 		if (-f "$prefix\.fastq\.gz") {
-			$seqmd5 = md5_hex("$prefix\.fastq\.gz");
+			$seqmd5 = get_MD5_hash("$prefix\.fastq\.gz");
 			$seq_format = 'fastq';
 		}
 		elsif (-f "$prefix\.scarf\.gz") {
-			$seqmd5 = md5_hex("$prefix\.scarf\.gz");
+			$seqmd5 = get_MD5_hash("$prefix\.scarf\.gz");
 			$seq_format = 'scarf';
 		}
 		else {
@@ -257,4 +257,19 @@ sub get_groups {
 
 sub usage {
 	print "Usage: perl prepare_geo_table.pl -g [group] -m [.mapping file] -o [output file] -s [project.info file]\n";
+}
+
+sub get_MD5_hash {
+        my $file = shift;
+        my $md5 = "";
+        if (-e $file) {
+                my $md5_info = `md5sum $file`;
+                my ($md5_hash, $junk) = split /\s/, $md5_info;
+                $md5 = $md5_hash;       
+        }
+        else {
+        	die "Could not find file $file when attempting to calculate an MD5 checksum.  Please check that this file exists in the specified location.\n"; 
+        }
+
+        return $md5;
 }
