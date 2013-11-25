@@ -8,7 +8,7 @@
 use strict;
 use warnings;
 use Getopt::Long qw(:config no_ignore_case);
-use DBI;
+#use DBI;
 use Bio::DB::GenBank;
 # FindBin variable '$FindBin::Bin' stores the path to batch_coproseq.pl
 use FindBin;	
@@ -24,12 +24,13 @@ use Term::ReadKey;
 system("$FindBin::Bin/.git-status-tester.sh");
 
 # Variables for interacting with the microbialomics server (-ncbi not invoked)
-my $db_name = "microbialomics_npm_mw";
-my $host = "hamlet";
-my $pass = "reader";
-my $user = "reader";
-my $dbh = DBI->connect("DBI:mysql:$db_name:$host",$user,$pass)
-	or die "can't open database: $DBI::errstr\n";
+# Commands for interacting with microbialomics have been commented out to reflect the death of this box
+#my $db_name = "microbialomics_npm_mw";
+#my $host = "hamlet";
+#my $pass = "reader";
+#my $user = "reader";
+#my $dbh = DBI->connect("DBI:mysql:$db_name:$host",$user,$pass)
+#	or die "can't open database: $DBI::errstr\n";
 
 # Locations of needed programs/scripts
 my $squash_exec_path =
@@ -621,10 +622,11 @@ sub download_genomes {
 		print "\nStarting genome downloads from NCBI...\n\n";
 		download_files_from_genbank($species_list_ref, $genomesdir);
 	}
-	elsif ($source eq 'microbialomics') {
-		print "\nStarting genome downloads from microbialomics...\n\n";
-		download_files_from_microbialomics($species_list_ref, $genomesdir);
-	}
+# Code below deactivated due to death of microbialomics server
+#	elsif ($source eq 'microbialomics') {
+#		print "\nStarting genome downloads from microbialomics...\n\n";
+#		download_files_from_microbialomics($species_list_ref, $genomesdir);
+#	}
 }
 
 sub download_files_from_genbank {
@@ -680,67 +682,69 @@ sub get_internal_genome_acc {
 	return \@acc_list;
 }
 
-sub download_files_from_microbialomics {
-	my ($species, $outputdir) = @_;		# Reference to an array of species ids, location to which to write genome files
-	my %species_for_acc = genomecodes::declare_speciesname_for_inhouseacc();
-	# Note that the lookup for species names will currently cause problems if there is no species name defined for an 
-	#	accession # in genomecodes.pm; need to check if a species name is defined, and if so use it, otherwise just use
-	#	the accession # instead (I don't think this should cause any problems)
-	# Ultimately I need an efficient way of building a genomecodes.pm file from J's database so that it doesn't need to be
-	#	manually updated as changes are made and new strains/species are introduced
-	print "Will use database $db_name\.\.\.\n\n";
-	for my $s (@$species) {
-		my $filefriendlyname;
-		if (defined $species_for_acc{$s}) {
-			$filefriendlyname = $species_for_acc{$s};
-		}
-		else {
-			print "Note: There is no species name defined for accession $s in genomecodes.pm. Will use $s as the species name instead.\n"; 
-			$filefriendlyname = $s;
-		}
-		$filefriendlyname =~ s/\s+/_/;
-		$filefriendlyname =~ s/\.//;
-		# Check if genome has already been downloaded...
-		if (-e "$outputdir\/$filefriendlyname") {
-			if (defined $species_for_acc{$s}) {
-				print "Note: It looks like the genome for $species_for_acc{$s} has already been downloaded.\n"; 
-			}
-			else {
-				print "Note: It looks like the genome for $s has already been downloaded.\n";
-			}
-		}
-		else {
-			my ($genome_id, $genome_seq) = get_genome_data($s);
-			my $filepath = "$outputdir\/$filefriendlyname";
-			open(OUT, ">$filepath") || die "Can't open $filepath!\n";
-			print OUT ">$filefriendlyname\n$genome_seq";
-			close OUT;
-			if (defined $species_for_acc{$s}) {
-				print "Download of $species_for_acc{$s} genome \($s\) from microbialomics complete\n";
-			}
-			else {
-				print "Download of $s genome from microbialomics complete\n";
-			}
-		}
-	}
-	print "\n";
-}
+# Deactivated due to death of the microbialomics server
+# sub download_files_from_microbialomics {
+# 	my ($species, $outputdir) = @_;		# Reference to an array of species ids, location to which to write genome files
+# 	my %species_for_acc = genomecodes::declare_speciesname_for_inhouseacc();
+# 	# Note that the lookup for species names will currently cause problems if there is no species name defined for an 
+# 	#	accession # in genomecodes.pm; need to check if a species name is defined, and if so use it, otherwise just use
+# 	#	the accession # instead (I don't think this should cause any problems)
+# 	# Ultimately I need an efficient way of building a genomecodes.pm file from J's database so that it doesn't need to be
+# 	#	manually updated as changes are made and new strains/species are introduced
+# 	print "Will use database $db_name\.\.\.\n\n";
+# 	for my $s (@$species) {
+# 		my $filefriendlyname;
+# 		if (defined $species_for_acc{$s}) {
+# 			$filefriendlyname = $species_for_acc{$s};
+# 		}
+# 		else {
+# 			print "Note: There is no species name defined for accession $s in genomecodes.pm. Will use $s as the species name instead.\n"; 
+# 			$filefriendlyname = $s;
+# 		}
+# 		$filefriendlyname =~ s/\s+/_/;
+# 		$filefriendlyname =~ s/\.//;
+# 		# Check if genome has already been downloaded...
+# 		if (-e "$outputdir\/$filefriendlyname") {
+# 			if (defined $species_for_acc{$s}) {
+# 				print "Note: It looks like the genome for $species_for_acc{$s} has already been downloaded.\n"; 
+# 			}
+# 			else {
+# 				print "Note: It looks like the genome for $s has already been downloaded.\n";
+# 			}
+# 		}
+# 		else {
+# 			my ($genome_id, $genome_seq) = get_genome_data($s);
+# 			my $filepath = "$outputdir\/$filefriendlyname";
+# 			open(OUT, ">$filepath") || die "Can't open $filepath!\n";
+# 			print OUT ">$filefriendlyname\n$genome_seq";
+# 			close OUT;
+# 			if (defined $species_for_acc{$s}) {
+# 				print "Download of $species_for_acc{$s} genome \($s\) from microbialomics complete\n";
+# 			}
+# 			else {
+# 				print "Download of $s genome from microbialomics complete\n";
+# 			}
+# 		}
+# 	}
+# 	print "\n";
+# }
 
-sub get_genome_data {
-	my $constant_id=shift;
-	my $query  = "SELECT genome_id, genome_sequence FROM genome g WHERE g.genome_constant_id=?";
-	my $sth = $dbh->prepare($query);
-	$sth->execute($constant_id);
-	if ($sth->rows == 0) {
-		die "\nERROR: There is no genome with genome_constant_id $constant_id",
-			" in $db_name. Check your accession # or genome abbreviation to be",
-			" sure it is correct.\n\n";
-	}
-	while (my @res = $sth->fetchrow_array()) {
-		return @res;
-	}
-	return;
-}
+# Code below deactivated due to death of the microbialomics server
+# sub get_genome_data {
+# 	my $constant_id=shift;
+# 	my $query  = "SELECT genome_id, genome_sequence FROM genome g WHERE g.genome_constant_id=?";
+# 	my $sth = $dbh->prepare($query);
+# 	$sth->execute($constant_id);
+# 	if ($sth->rows == 0) {
+# 		die "\nERROR: There is no genome with genome_constant_id $constant_id",
+# 			" in $db_name. Check your accession # or genome abbreviation to be",
+# 			" sure it is correct.\n\n";
+# 	}
+# 	while (my @res = $sth->fetchrow_array()) {
+# 		return @res;
+# 	}
+# 	return;
+# }
 
 # table_to_hash(table file)
 sub table_to_hash {
@@ -942,18 +946,19 @@ sub prepare_references {
 	}
 	else { 
 		if ((scalar @$internal_genome_accs) > 0) {
-			download_genomes($internal_genome_accs, 'microbialomics');
-			my %species_for_acc = genomecodes::declare_speciesname_for_inhouseacc();
-			# Key = accession #, value = species name
-			foreach(@$internal_genome_accs) {	# $species_list_ref points to array of accession #'s, 
-											# some of which may not be defined in species_for_acc
-				if (defined $species_for_acc{$_}) {
-					push(@species_names, $species_for_acc{$_});
-				}
-				else {
-					push(@species_names, $_);	# Use accession # as species name if species name not defined in genomecodes.pm
-				}
-			}
+			die "The COPRO-Seq pipeline no longer supports reference genome retrieval from the Microbialomics server, due to its untimely demise.\n";
+# 			download_genomes($internal_genome_accs, 'microbialomics');
+# 			my %species_for_acc = genomecodes::declare_speciesname_for_inhouseacc();
+# 			# Key = accession #, value = species name
+# 			foreach(@$internal_genome_accs) {	# $species_list_ref points to array of accession #'s, 
+# 											# some of which may not be defined in species_for_acc
+# 				if (defined $species_for_acc{$_}) {
+# 					push(@species_names, $species_for_acc{$_});
+# 				}
+# 				else {
+# 					push(@species_names, $_);	# Use accession # as species name if species name not defined in genomecodes.pm
+# 				}
+# 			}
 		}
 		else {
 			print "The user has requested no microbialomics genome files.\n\n";
@@ -985,6 +990,7 @@ sub prepare_references {
 	}
 	else {
 		print "The user has supplied no external genome files.\n\n";
+		die "ERROR: You must provide a path to at least one FASTA-formatted reference genome sequence file in order for the analysis to proceed.\n";
 	}
 	
 	if ((scalar @$internal_genome_accs == 0) && (scalar @$external_genome_paths == 0)) {
