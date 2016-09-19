@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 
 # FUTURE CHANGES:
 #	Ultimately, I should make this a more generalized script that takes as input an original sequencing results file (FASTQ, SCARF formats) and 
