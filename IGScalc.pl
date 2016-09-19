@@ -149,7 +149,7 @@ close ELANDBATCH;
 # Submit batch file to nq
 # Eventually refine this by checking for needed memory requirements by looking at total size of all squashed files
 # Need some kind of status checking loop to make sure all alignments are finished - recycle coproseq code?
-system("nq $outputdir\/elandIGSsubmissions.jobs | qsub -l h_vmem=$MEMREQ -l arch=lx26-amd64");
+system("nq $outputdir\/elandIGSsubmissions.jobs | sbatch --mem=$MEMREQ");
 
 # MONITOR ELAND ALIGNMENT JOBS UNTIL ALL ARE FINISHED
 # Major problem with this approach is that jobs will appear to be running indefinitely if the output file is created before the program dies
