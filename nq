@@ -1,0 +1,62 @@
+#!/bin/bash
+
+cmd=`basename $0`
+group=${2:-1}
+
+if [ -z "$1" ] || [ "$1" == "-h" ]; then
+    cat <<EOF >&2 
+
+Usage: $cmd JOBFILE [NUM_LINES_PER_TASK]
+
+    $cmd creates a muli-task job where each task is a line (or
+    group of lines) in JOBFILE.  It creates a script suitable 
+    for piping to qsub.  Running $cmd without piping to qsub 
+    will simply print out the generated qsub script. 
+    
+    Intended command usage:
+    
+        $cmd JOBFILE [NUM_LINES_PER_TASK] | qsub [QSUB_OPTS]
+
+    $cmd includes a reasonable default set of QSUB_OPTS: 
+
+    -V -cwd -r y 
+
+    Feel free to override or add your own.  See the qsub man 
+    page for more info.  
+
+    WARNING: Do not change or remove JOBFILE until job is complete.
+
+EOF
+    exit 1
+fi
+
+if [ ! -f $1 ]; then
+    echo "Error: $1 does not exist."
+    exit 1
+fi 
+
+wc=`wc -l $1|awk '{ print $1 }'`
+
+cat <<EOF
+#!/bin/bash
+#$ -V -cwd -r y 
+#$ -t 1-$wc:$group -N `basename $1` 
+let l=SGE_TASK_ID+SGE_TASK_STEPSIZE-1 
+[ \$l -lt \$SGE_TASK_LAST ] || l=\$SGE_TASK_LAST
+echo "Started: \`date\`" >&2
+echo "Host: \`hostname\`" >&2
+echo -n "Command: ">&2; sed -n "\$SGE_TASK_ID,\${l}p;\${l}q" $1 >&2
+time sed -n "\$SGE_TASK_ID,\${l}p;\${l}q" $1 | bash
+echo "Finished: \`date\`" >&2
+
+# ---------------------------------------------
+#
+# $cmd is meant to be used with qsub
+#
+# Intended command usage:
+#
+#    $cmd $* | qsub [ QSUB OPTS ]
+#
+# For more info: $cmd -h
+# ---------------------------------------------
+EOF
