@@ -99,7 +99,7 @@ if ($single_cpu) {
 }
 else { 
 	foreach (@$ref_to_array_of_jobs_files) {
-		system("qsub -P long -l h_vmem=$ALIGNMENT_MEMORY $_");
+		system("sbatch --mem=$ALIGNMENT_MEMORY $_");
 	}
 }
 
