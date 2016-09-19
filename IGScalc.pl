@@ -37,7 +37,7 @@ use Cwd;
 use Math::Round;
 use Bio::Tools::GuessSeqFormat;
 
-my $squash_program_location = '/srv/cgs/local/gapipeline/latest/bin/squashGenome';
+my $squash_program_location = 'squashGenome';
 
 my $cleanup;					# Default: do not clean up afterwards (i.e. leave intermediate, batch and squashed files in place)
 my $fastadir = getcwd();		# Default: genomes are in directory from which script was called
