@@ -105,11 +105,10 @@ else {
 
 ########################################################################################################################################################
 # PURPOSE:	Create a jobs file for each Eland submission and pass it to nq
-# NOTES:	I would have preferred to name the jobs file "$prefix_elandjobs", but in cases where $prefix begins with a number, qsub will return an error
+# NOTES:	I would have preferred to name the jobs file "$prefix_elandjobs", but in cases where $prefix begins with a number, sbatch will return an error
 #			Could get around this by just using some particular letter at the beginning, like "X_$prefix_elandjobs"; this would allow me to selectively
 #				remove the appropriate elandjobs files at the end of the script without interrupting other submissions from other input files
-#			If for some reason you suspect Eland will take longer than 1 hour to run, you must add in the "-P long" option to ensure jobs are passed
-#				to the long queue
+
 sub make_alignment_jobs_file {
 	my ($barcodes_array_ref, $readsize, $bcsize) = @_;
 	my $elandtype = "eland_".($readsize - $bcsize);
