@@ -1,4 +1,4 @@
-#! /usr/bin/perl
+#! /usr/bin/env perl
 # prepare_geo_table.pl
 # Author: Nate McNulty
 # This script is intended to be run after the COPRO-Seq pipeline (invoked using the -G switch) 
