@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 
 # Last Modified 04/28/2010
 # Author: Nate McNulty
