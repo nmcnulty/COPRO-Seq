@@ -34,7 +34,7 @@ system("$FindBin::Bin/.git-status-tester.sh");
 
 # Locations of needed programs/scripts
 my $squash_exec_path =
-	"/srv/cgs/local/gapipeline/GAPipeline-1.5.0/bin/squashGenome";
+	"squashGenome";
 my $summarize_tables_script_path =
 	"$FindBin::Bin/summarize_tables.pl";
 my $IGS_calc_script_path =
