@@ -142,7 +142,7 @@ foreach my $n (@kmerfilepaths) {
  	}
  	my $outfilestring = $n . ".elandout";
 	push (@elandoutpaths, $outfilestring);
- 	print ELANDBATCH "/srv/cgs/local/gapipeline/latest/bin/eland_$ksize $n $squashdir $outfilestring\n";
+ 	print ELANDBATCH "eland_$ksize $n $squashdir $outfilestring\n";
 }
 close ELANDBATCH;
 

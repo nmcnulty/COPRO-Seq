@@ -59,7 +59,7 @@ my $ALIGNMENT_MEMORY = '10G';	# Amount of RAM to allocate to Eland when doing al
 my $parse_script_path =
 	"$FindBin::Bin/parseNM.pl";
 my $eland_executables_folder = 
-	'/srv/cgs/local/gapipeline/latest/bin/';
+	'';
 
 # Generate directories that will be needed (if they haven't been created already; -d should possibly be -e below???)
 if (! -d "$outputdir")					{	mkdir "$outputdir" || die "$!\n";					}
