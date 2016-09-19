@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 # Author: Nathan McNulty
 # Last updated: June 2012
 # Acknowledgements: J. Faith, for the re-use of some of his RNA-Seq pipeline
