@@ -99,7 +99,7 @@ my $groups_hash_ref = parse_groups($group);
 
 # Copy Google spreadsheet to local text file
 #download_table("https://docs.google.com/spreadsheet/ccc?key=$google_key&output=txt&gid=0", $project_data_path);
-download_table("https://docs.google.com/spreadsheet/ccc?key=$google_key&output=txt", $project_data_path);
+#download_table("https://docs.google.com/spreadsheet/ccc?key=$google_key&output=txt", $project_data_path);
 #print "Downloaded spreadsheet from location:\nhttps://docs.google.com/spreadsheet/ccc?key=$google_key&output=txt&gid=0\n";
 
 # Load contents of 'project.info' into hierarchy of variables
