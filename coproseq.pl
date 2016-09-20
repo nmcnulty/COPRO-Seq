@@ -117,6 +117,7 @@ sub make_alignment_jobs_file {
 		push(@array_of_jobs_files, $jobs_file_path);
 		open (TASKSFORBC, ">$jobs_file_path") || die "Error: Can't create $jobs_file_path\n\n";
 		if (-s "$outputdir\/bcsortedseqs\/$prefix\_$_\.fas") {	# If sequence file is not empty (-s returns true for file sizes > 0)
+                        print TASKSFORBC "#!/bin/bash\n";
 			print TASKSFORBC
 			# Align to microbial references
 				"$eland_executables_folder$elandtype $outputdir\/bcsortedseqs\/$prefix\_$_\.fas $genomesdir $outputdir\/elandresults\/$prefix\_$_\.elandout\n",
@@ -138,6 +139,7 @@ sub make_alignment_jobs_file {
 				"echo COMPLETE > NM\/$prefix\_$_\.done\n";
 		}
 		else {
+                        print TASKSFORBC "#!/bin/bash\n";
 			print TASKSFORBC "echo Skipping alignments for barcode $_ because there were no sequences in your input file matching this barcode.\n";
 			# Create empty .elandout file so that progress monitoring doesn't break
 			print TASKSFORBC "touch $outputdir\/elandresults\/$prefix\_$_\.elandout\n";
