@@ -58,8 +58,7 @@ my $ALIGNMENT_MEMORY = '10G';	# Amount of RAM to allocate to Eland when doing al
 # Locations of needed programs/scripts
 my $parse_script_path =
 	"$FindBin::Bin/parseNM.pl";
-my $eland_executables_folder = 
-	'';
+my $eland_executables_folder = '';
 
 # Generate directories that will be needed (if they haven't been created already; -d should possibly be -e below???)
 if (! -d "$outputdir")					{	mkdir "$outputdir" || die "$!\n";					}
@@ -120,18 +119,18 @@ sub make_alignment_jobs_file {
 		if (-s "$outputdir\/bcsortedseqs\/$prefix\_$_\.fas") {	# If sequence file is not empty (-s returns true for file sizes > 0)
 			print TASKSFORBC
 			# Align to microbial references
-				"$eland_executables_folder\/$elandtype $outputdir\/bcsortedseqs\/$prefix\_$_\.fas $genomesdir $outputdir\/elandresults\/$prefix\_$_\.elandout\n",
+				"$eland_executables_folder$elandtype $outputdir\/bcsortedseqs\/$prefix\_$_\.fas $genomesdir $outputdir\/elandresults\/$prefix\_$_\.elandout\n",
 			# Pass sequences that did not align to microbial references to a new file (use as input for alignment to adapters)
 				"$parse_script_path $outputdir\/elandresults\/$prefix\_$_\.elandout NM\/$prefix\_$_\_norefs.NM\n",
 			# Align remaining sequences to adapter reference, allowing 2 mismatches
 			# Squashed adapter genome should be distributed with scripts
-				"$eland_executables_folder\/$elandtype NM\/$prefix\_$_\_norefs.NM $FindBin::Bin/filteringrefs/adapter NM\/$prefix\_$_\_adapter.elandout\n", 
+				"$eland_executables_folder$elandtype NM\/$prefix\_$_\_norefs.NM $FindBin::Bin/filteringrefs/adapter NM\/$prefix\_$_\_adapter.elandout\n", 
 			# Pass sequences that did not align to adapter reference to a new file (use as input for alignment to mouse)
 			# Also pass sequences that DID align to adapter reference to a new file
 				"$parse_script_path NM\/$prefix\_$_\_adapter.elandout NM\/$prefix\_$_\_noadapters.NM filteredseqs/adapter\/$prefix\_$_\_adapter.fna\n",
 			# Align remaining sequences to mouse reference, allowing 2 mismatches
 			# Squashed mouse genome should be distributed with scripts
-				"$eland_executables_folder\/$elandtype NM\/$prefix\_$_\_noadapters.NM $FindBin::Bin/filteringrefs/mouse NM\/$prefix\_$_\_mouse.elandout\n",
+				"$eland_executables_folder$elandtype NM\/$prefix\_$_\_noadapters.NM $FindBin::Bin/filteringrefs/mouse NM\/$prefix\_$_\_mouse.elandout\n",
 			# Pass sequences that did not align to mouse reference to a new file (these will be the final, non-matching sequences of unknown origin)
 			# Also pass sequences that DID align to mouse reference to a new file
 				"$parse_script_path NM\/$prefix\_$_\_mouse.elandout filteredseqs/unknown\/$prefix\_$_\_unknown.fna filteredseqs/mouse\/$prefix\_$_\_mouse.fna\n",
