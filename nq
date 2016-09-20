@@ -13,5 +13,5 @@ cat <<EOF
 #!/bin/bash
 #SBATCH -J `basename $1` 
 #SBATCH --array 1-$wc 
-bash -c "\$( sed -n "\${SLURM_ARRAY_TASK_ID}p $1)"
+bash -c "\$( sed -n \${SLURM_ARRAY_TASK_ID}p $1)"
 EOF
