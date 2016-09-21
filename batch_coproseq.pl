@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 # Author: Nathan McNulty
 # Last updated: June 2012
 # Acknowledgements: J. Faith, for the re-use of some of his RNA-Seq pipeline
@@ -34,7 +34,7 @@ system("$FindBin::Bin/.git-status-tester.sh");
 
 # Locations of needed programs/scripts
 my $squash_exec_path =
-	"/srv/cgs/local/gapipeline/GAPipeline-1.5.0/bin/squashGenome";
+	"squashGenome";
 my $summarize_tables_script_path =
 	"$FindBin::Bin/summarize_tables.pl";
 my $IGS_calc_script_path =
@@ -99,7 +99,7 @@ my $groups_hash_ref = parse_groups($group);
 
 # Copy Google spreadsheet to local text file
 #download_table("https://docs.google.com/spreadsheet/ccc?key=$google_key&output=txt&gid=0", $project_data_path);
-download_table("https://docs.google.com/spreadsheet/ccc?key=$google_key&output=txt", $project_data_path);
+#download_table("https://docs.google.com/spreadsheet/ccc?key=$google_key&output=txt", $project_data_path);
 #print "Downloaded spreadsheet from location:\nhttps://docs.google.com/spreadsheet/ccc?key=$google_key&output=txt&gid=0\n";
 
 # Load contents of 'project.info' into hierarchy of variables
@@ -317,6 +317,7 @@ sub print_HoH_from_table_file {
 sub make_summarize_file {
 	my ($spreadsheet_hash, $filepath) = @_;
 	open (SUMMARIZE, ">$filepath") || die "ERROR: Can't open $filepath!\n";
+	print SUMMARIZE "#!/bin/bash\n";
 	print SUMMARIZE "mkdir $summariesdir\n";
 	
 	# Summarize all .countsbybc files; use spreadsheet hash to make list of all .countsbybc files
@@ -337,6 +338,7 @@ sub make_summarize_file {
 sub make_IGS_calc_file {
 	my $filepath = shift;
 	open (IGS, ">$filepath") || die "ERROR: Can't open $filepath!\n";
+	print IGS "#!/bin/bash\n";
 	print IGS "mkdir genomes/IGS\n";
 	print IGS "perl $IGS_calc_script_path -f genomes -s genomes/squashed -o genomes/IGS -k $readsize -c\n";
 	close IGS;

@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 # Author: Nathan McNulty
 # Last Updated: 06/29/2012
 
@@ -58,8 +58,7 @@ my $ALIGNMENT_MEMORY = '10G';	# Amount of RAM to allocate to Eland when doing al
 # Locations of needed programs/scripts
 my $parse_script_path =
 	"$FindBin::Bin/parseNM.pl";
-my $eland_executables_folder = 
-	'/srv/cgs/local/gapipeline/latest/bin/';
+my $eland_executables_folder = '';
 
 # Generate directories that will be needed (if they haven't been created already; -d should possibly be -e below???)
 if (! -d "$outputdir")					{	mkdir "$outputdir" || die "$!\n";					}
@@ -99,17 +98,16 @@ if ($single_cpu) {
 }
 else { 
 	foreach (@$ref_to_array_of_jobs_files) {
-		system("qsub -P long -l h_vmem=$ALIGNMENT_MEMORY $_");
+		system("sbatch --mem=$ALIGNMENT_MEMORY $_");
 	}
 }
 
 ########################################################################################################################################################
 # PURPOSE:	Create a jobs file for each Eland submission and pass it to nq
-# NOTES:	I would have preferred to name the jobs file "$prefix_elandjobs", but in cases where $prefix begins with a number, qsub will return an error
+# NOTES:	I would have preferred to name the jobs file "$prefix_elandjobs", but in cases where $prefix begins with a number, sbatch will return an error
 #			Could get around this by just using some particular letter at the beginning, like "X_$prefix_elandjobs"; this would allow me to selectively
 #				remove the appropriate elandjobs files at the end of the script without interrupting other submissions from other input files
-#			If for some reason you suspect Eland will take longer than 1 hour to run, you must add in the "-P long" option to ensure jobs are passed
-#				to the long queue
+
 sub make_alignment_jobs_file {
 	my ($barcodes_array_ref, $readsize, $bcsize) = @_;
 	my $elandtype = "eland_".($readsize - $bcsize);
@@ -119,20 +117,21 @@ sub make_alignment_jobs_file {
 		push(@array_of_jobs_files, $jobs_file_path);
 		open (TASKSFORBC, ">$jobs_file_path") || die "Error: Can't create $jobs_file_path\n\n";
 		if (-s "$outputdir\/bcsortedseqs\/$prefix\_$_\.fas") {	# If sequence file is not empty (-s returns true for file sizes > 0)
+                        print TASKSFORBC "#!/bin/bash\n";
 			print TASKSFORBC
 			# Align to microbial references
-				"$eland_executables_folder\/$elandtype $outputdir\/bcsortedseqs\/$prefix\_$_\.fas $genomesdir $outputdir\/elandresults\/$prefix\_$_\.elandout\n",
+				"$eland_executables_folder$elandtype $outputdir\/bcsortedseqs\/$prefix\_$_\.fas $genomesdir $outputdir\/elandresults\/$prefix\_$_\.elandout\n",
 			# Pass sequences that did not align to microbial references to a new file (use as input for alignment to adapters)
 				"$parse_script_path $outputdir\/elandresults\/$prefix\_$_\.elandout NM\/$prefix\_$_\_norefs.NM\n",
 			# Align remaining sequences to adapter reference, allowing 2 mismatches
 			# Squashed adapter genome should be distributed with scripts
-				"$eland_executables_folder\/$elandtype NM\/$prefix\_$_\_norefs.NM $FindBin::Bin/filteringrefs/adapter NM\/$prefix\_$_\_adapter.elandout\n", 
+				"$eland_executables_folder$elandtype NM\/$prefix\_$_\_norefs.NM $FindBin::Bin/filteringrefs/adapter NM\/$prefix\_$_\_adapter.elandout\n", 
 			# Pass sequences that did not align to adapter reference to a new file (use as input for alignment to mouse)
 			# Also pass sequences that DID align to adapter reference to a new file
 				"$parse_script_path NM\/$prefix\_$_\_adapter.elandout NM\/$prefix\_$_\_noadapters.NM filteredseqs/adapter\/$prefix\_$_\_adapter.fna\n",
 			# Align remaining sequences to mouse reference, allowing 2 mismatches
 			# Squashed mouse genome should be distributed with scripts
-				"$eland_executables_folder\/$elandtype NM\/$prefix\_$_\_noadapters.NM $FindBin::Bin/filteringrefs/mouse NM\/$prefix\_$_\_mouse.elandout\n",
+				"$eland_executables_folder$elandtype NM\/$prefix\_$_\_noadapters.NM $FindBin::Bin/filteringrefs/mouse NM\/$prefix\_$_\_mouse.elandout\n",
 			# Pass sequences that did not align to mouse reference to a new file (these will be the final, non-matching sequences of unknown origin)
 			# Also pass sequences that DID align to mouse reference to a new file
 				"$parse_script_path NM\/$prefix\_$_\_mouse.elandout filteredseqs/unknown\/$prefix\_$_\_unknown.fna filteredseqs/mouse\/$prefix\_$_\_mouse.fna\n",
@@ -140,6 +139,7 @@ sub make_alignment_jobs_file {
 				"echo COMPLETE > NM\/$prefix\_$_\.done\n";
 		}
 		else {
+                        print TASKSFORBC "#!/bin/bash\n";
 			print TASKSFORBC "echo Skipping alignments for barcode $_ because there were no sequences in your input file matching this barcode.\n";
 			# Create empty .elandout file so that progress monitoring doesn't break
 			print TASKSFORBC "touch $outputdir\/elandresults\/$prefix\_$_\.elandout\n";

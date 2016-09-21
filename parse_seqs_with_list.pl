@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 
 # Inputs: Sequence file (SCARF, FASTA or FASTQ format), a text file of sequence headers to include/exclude in output, output filename, barcode length, mode, sequence file format
 

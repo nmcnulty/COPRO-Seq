@@ -1,4 +1,4 @@
-#!/usr/bin/perl -w
+#!/usr/bin/env perl
 
 # Note that this script is pretty slow -- just to read such a large file takes awhile.
 # It would be hard to get much faster in perl, as I've already used a lot of efficiency tricks to

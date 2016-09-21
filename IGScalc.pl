@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 
 # Last Modified 04/28/2010
 # Author: Nate McNulty
@@ -37,7 +37,7 @@ use Cwd;
 use Math::Round;
 use Bio::Tools::GuessSeqFormat;
 
-my $squash_program_location = '/srv/cgs/local/gapipeline/latest/bin/squashGenome';
+my $squash_program_location = 'squashGenome';
 
 my $cleanup;					# Default: do not clean up afterwards (i.e. leave intermediate, batch and squashed files in place)
 my $fastadir = getcwd();		# Default: genomes are in directory from which script was called
@@ -142,14 +142,14 @@ foreach my $n (@kmerfilepaths) {
  	}
  	my $outfilestring = $n . ".elandout";
 	push (@elandoutpaths, $outfilestring);
- 	print ELANDBATCH "/srv/cgs/local/gapipeline/latest/bin/eland_$ksize $n $squashdir $outfilestring\n";
+ 	print ELANDBATCH "eland_$ksize $n $squashdir $outfilestring\n";
 }
 close ELANDBATCH;
 
 # Submit batch file to nq
 # Eventually refine this by checking for needed memory requirements by looking at total size of all squashed files
 # Need some kind of status checking loop to make sure all alignments are finished - recycle coproseq code?
-system("nq $outputdir\/elandIGSsubmissions.jobs | qsub -l h_vmem=$MEMREQ -l arch=lx26-amd64");
+system("nq $outputdir\/elandIGSsubmissions.jobs | sbatch --mem=$MEMREQ");
 
 # MONITOR ELAND ALIGNMENT JOBS UNTIL ALL ARE FINISHED
 # Major problem with this approach is that jobs will appear to be running indefinitely if the output file is created before the program dies
