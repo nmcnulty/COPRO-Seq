@@ -317,6 +317,7 @@ sub print_HoH_from_table_file {
 sub make_summarize_file {
 	my ($spreadsheet_hash, $filepath) = @_;
 	open (SUMMARIZE, ">$filepath") || die "ERROR: Can't open $filepath!\n";
+	print SUMMARIZE "#!/bin/bash\n";
 	print SUMMARIZE "mkdir $summariesdir\n";
 	
 	# Summarize all .countsbybc files; use spreadsheet hash to make list of all .countsbybc files
@@ -337,6 +338,7 @@ sub make_summarize_file {
 sub make_IGS_calc_file {
 	my $filepath = shift;
 	open (IGS, ">$filepath") || die "ERROR: Can't open $filepath!\n";
+	print IGS "#!/bin/bash\n";
 	print IGS "mkdir genomes/IGS\n";
 	print IGS "perl $IGS_calc_script_path -f genomes -s genomes/squashed -o genomes/IGS -k $readsize -c\n";
 	close IGS;
