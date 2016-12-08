@@ -48,7 +48,7 @@ my $genomesdir = "genomes";
 my $summariesdir = "summaries";
 my $GEOdir = "GEO";
 my $squashedgenomesdir = "genomes/squashed";
-my $project_data_path = "project.info";
+my $project_data_path = "";
 #my $getdata_file_path = "getdata.sh";
 my $align_file_path = "align.sh";
 my $cleanup_file_path = "cleanup.sh";
@@ -64,14 +64,15 @@ my $mismatches_allowed = 0;
 my $readsize = 25;	# Length AFTER trimming off barcode
 
 GetOptions(
-	"a|allfiles"				=> \$allfiles,
+#MCH#	"a|allfiles"				=> \$allfiles,
 	"e|errors=i"				=> \$mismatches_allowed,
 	"g|group=s"					=> \$group,
 	"G|GEO"						=> \$GEO,
 	"i|igs=s"					=> \$IGS_table_file,
-	"k|key=s"					=> \$google_key,
+#MCH#	"k|key=s"					=> \$google_key,
 	'l|length=i'				=> \$readsize,
 	"m|mapping=s"				=> \$mapping_file_path,
+	"p|project=s"				=> \$project_data_path,
 	# ncbi option below is NOT working for draft genomes
 	"n|ncbi"					=> \$ncbi,
 	"o|output=s"				=> \$basedir,
@@ -391,7 +392,7 @@ sub make_align_file {
 	open (ALIGNFILE, ">$filepath") || die "ERROR: Can't open $filepath!\n";
 	for my $p (@$spreadsheet_hash) {
 		my $prefix = $p->{machine}.'_'.$p->{run}.'_'.$p->{lane};
-		print ALIGNFILE "perl $coproseq_script_path -i $prefix.seq -b $prefix.bc -g $basedir/genomes/squashed" .
+		print ALIGNFILE "perl $coproseq_script_path -i $prefix.seq -b $prefix.bc -g genomes/squashed" .
 						" -p $prefix -m $mismatches_allowed -o $basedir -n $IGS_PATH -t -l " . ($readsize+$$bclengths_hash_ref{$p->{pool}}) . 
 						$cpu."\n";
 	}
@@ -809,21 +810,20 @@ sub fancy_title {
 }
 
 sub usage {
-	my $error = shift;
-	print "$error\n" if $error;
-	print 	"Usage: perl batch_coproseq.pl -g <analysis group(s)> -m <mapping file>\n",
-			"\t-e Number of errors/mismatches to allow in alignment (0-2)\n",
-			"\t-g Code(s) specifying the analysis groups (defined in Google Spreadsheet) you want to include in this analysis\n",
-			"\t-i IGS table file (optional)\n",
-			"\t-k Google spreadsheet key for specifying spreadsheets other than the default\n",
-			"\t-l Length of read (after trimming barcode) to use in alignment\n",
-			"\t-m Mapping file specifying the barcode associated with each sample in your analysis\n",
-			"\t-ncbi Specifies that genome files should be downloaded from the NCBI web server, rather than microbialomics\n",
-			"\t-p Google spreadsheet page/ID for specifying sheets other than the first in a multi-page spreadsheet; 1st page by default (i.e. -i 0)\n",
-			"\n";
-	exit(1);
+        my $error = shift;
+        print "$error\n" if $error;
+        print   "Usage: perl batch_coproseq.pl -g <analysis group(s)> -m <mapping file> -p <project file>\n",
+                        "\t-e Number of errors/mismatches to allow in ELAND alignment (0-2)\n",
+                        "\t-g Code(s) specifying the analysis groups (defined in your project file) you want to include in this analysis\n",
+                        "\t-i IGS table file (optional)\n",
+                        "\t-k Google spreadsheet key for specifying spreadsheets other than the default\n",
+                        "\t-l Length of read (after trimming barcode) to use in alignment (default is 25)\n",
+                        "\t-m Mapping file specifying the barcode associated with each sample in your analysis\n",
+                        "\t-p File specifying the project data associated with each analysis group (formerly \"project.info\")\n",
+                        "\t-ncbi Specifies that genome files should be downloaded from the NCBI web server\n",
+                        "\n";
+        exit(1);
 }
-
 
 # Takes any run number from the Google spreadsheet of 4 digits or less, 
 # excluding any decimals specifying run version numbers, and converts it to the

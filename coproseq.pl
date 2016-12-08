@@ -122,28 +122,28 @@ sub make_alignment_jobs_file {
 			# Align to microbial references
 				"$eland_executables_folder$elandtype $outputdir\/bcsortedseqs\/$prefix\_$_\.fas $genomesdir $outputdir\/elandresults\/$prefix\_$_\.elandout\n",
 			# Pass sequences that did not align to microbial references to a new file (use as input for alignment to adapters)
-				"$parse_script_path $outputdir\/elandresults\/$prefix\_$_\.elandout NM\/$prefix\_$_\_norefs.NM\n",
+				"$parse_script_path $outputdir\/elandresults\/$prefix\_$_\.elandout $outputdir\/NM\/$prefix\_$_\_norefs.NM\n",
 			# Align remaining sequences to adapter reference, allowing 2 mismatches
 			# Squashed adapter genome should be distributed with scripts
-				"$eland_executables_folder$elandtype NM\/$prefix\_$_\_norefs.NM $FindBin::Bin/filteringrefs/adapter NM\/$prefix\_$_\_adapter.elandout\n", 
+				"$eland_executables_folder$elandtype $outputdir\/NM\/$prefix\_$_\_norefs.NM $FindBin::Bin/filteringrefs/adapter $outputdir\/NM\/$prefix\_$_\_adapter.elandout\n", 
 			# Pass sequences that did not align to adapter reference to a new file (use as input for alignment to mouse)
 			# Also pass sequences that DID align to adapter reference to a new file
-				"$parse_script_path NM\/$prefix\_$_\_adapter.elandout NM\/$prefix\_$_\_noadapters.NM filteredseqs/adapter\/$prefix\_$_\_adapter.fna\n",
+				"$parse_script_path $outputdir\/NM\/$prefix\_$_\_adapter.elandout $outputdir\/NM\/$prefix\_$_\_noadapters.NM $outputdir\/filteredseqs/adapter\/$prefix\_$_\_adapter.fna\n",
 			# Align remaining sequences to mouse reference, allowing 2 mismatches
 			# Squashed mouse genome should be distributed with scripts
-				"$eland_executables_folder$elandtype NM\/$prefix\_$_\_noadapters.NM $FindBin::Bin/filteringrefs/mouse NM\/$prefix\_$_\_mouse.elandout\n",
+				"$eland_executables_folder$elandtype $outputdir\/NM\/$prefix\_$_\_noadapters.NM $FindBin::Bin/filteringrefs/mouse $outputdir\/NM\/$prefix\_$_\_mouse.elandout\n",
 			# Pass sequences that did not align to mouse reference to a new file (these will be the final, non-matching sequences of unknown origin)
 			# Also pass sequences that DID align to mouse reference to a new file
-				"$parse_script_path NM\/$prefix\_$_\_mouse.elandout filteredseqs/unknown\/$prefix\_$_\_unknown.fna filteredseqs/mouse\/$prefix\_$_\_mouse.fna\n",
+				"$parse_script_path $outputdir\/NM\/$prefix\_$_\_mouse.elandout $outputdir\/filteredseqs/unknown\/$prefix\_$_\_unknown.fna $outputdir\/filteredseqs/mouse\/$prefix\_$_\_mouse.fna\n",
 			# Create dummy .done file to record that all tasks are completed
-				"echo COMPLETE > NM\/$prefix\_$_\.done\n";
+				"echo COMPLETE > $outputdir\/NM\/$prefix\_$_\.done\n";
 		}
 		else {
                         print TASKSFORBC "#!/bin/bash\n";
 			print TASKSFORBC "echo Skipping alignments for barcode $_ because there were no sequences in your input file matching this barcode.\n";
 			# Create empty .elandout file so that progress monitoring doesn't break
 			print TASKSFORBC "touch $outputdir\/elandresults\/$prefix\_$_\.elandout\n";
-			print TASKSFORBC "echo COMPLETE > NM\/$prefix\_$_\.done\n";
+			print TASKSFORBC "echo COMPLETE > $outputdir\/NM\/$prefix\_$_\.done\n";
 		}
 		close TASKSFORBC;
 		# Append new jobs here with semicolons so that multiple tasks get passed to each node but are completed as a group
@@ -200,7 +200,7 @@ unless ($single_cpu) {
 		$num_finished = 0;
 		$num_notstarted = 0;
 		foreach (@barcodes) {
-			my $filestring = "NM\/$prefix\_$_\.done";
+			my $filestring = "$outputdir\/NM\/$prefix\_$_\.done";
 			my $statuscode = check_for_file($filestring);
 			if ($statuscode == 0) { $num_notstarted++; }
 			elsif ($statuscode == 1) { $num_running++; }
