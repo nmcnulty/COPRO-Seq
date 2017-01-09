@@ -392,7 +392,7 @@ sub make_align_file {
 	open (ALIGNFILE, ">$filepath") || die "ERROR: Can't open $filepath!\n";
 	for my $p (@$spreadsheet_hash) {
 		my $prefix = $p->{machine}.'_'.$p->{run}.'_'.$p->{lane};
-		print ALIGNFILE "perl $coproseq_script_path -i $prefix.seq -b $prefix.bc -g $basedir/genomes/squashed" .
+		print ALIGNFILE "perl $coproseq_script_path -i $prefix.seq -b $prefix.bc -g genomes/squashed" .
 						" -p $prefix -m $mismatches_allowed -o $basedir -n $IGS_PATH -t -l " . ($readsize+$$bclengths_hash_ref{$p->{pool}}) . 
 						$cpu."\n";
 	}
