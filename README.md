@@ -8,5 +8,5 @@ https://gitlab.com/hibberdm/COPRO-Seq
 
 References
 ----------
--McNulty, NP, Yatsunenko, T, and Hsiao A, et al. Sci Transl Med. 2011 Oct 26;3(106):106ra106. https://doi.org/10.1126/scitranslmed.3002701
--McNulty, NP, et al. PLoS Biol. 2013;11(8):e1001637.  https://doi.org/10.1371/journal.pbio.1001637
+1) McNulty, NP, Yatsunenko, T, and Hsiao A, et al. Sci Transl Med. 2011 Oct 26;3(106):106ra106. https://doi.org/10.1126/scitranslmed.3002701
+2) McNulty, NP, et al. PLoS Biol. 2013;11(8):e1001637.  https://doi.org/10.1371/journal.pbio.1001637
