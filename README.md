@@ -1,6 +1,6 @@
 COPRO-Seq
 =========
-Scripts and other resources needed to perform a COPRO-Seq (COmmunity PROfiling by Sequencing) analysis as originally described by McNulty and colleagues (1,2). This type of analysis is useful when one is interested in simultaneously measuring the proportional representation of many different microbes in an experimental sample. It is most appropriate when working with defined consortia of known, sequenced organisms.
+Scripts and other resources needed to perform a COPRO-Seq (COmmunity PROfiling by Sequencing) analysis as originally described by McNulty and colleagues (1,2). This type of analysis is useful when one is interested in simultaneously measuring the proportional representation of many different microbes in an experimental sample. It is best suited for scenarios in which a researcher is working with defined consortia of known, sequenced organisms.
 
 **IMPORTANT NOTE: The pipeline archived within this repo is now deprecated. Those interested in COPRO-Seq are encouraged to explore an updated version currently housed at the following location:**
 
